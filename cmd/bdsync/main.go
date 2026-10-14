@@ -1,4 +1,4 @@
-// syncer — 本地 → 百度网盘 单向备份守护进程（design.md 设计稿 v1）。
+// bdsync — 本地 → 百度网盘 单向备份守护进程（design.md 设计稿 v1）。
 //
 // Phase 1：本地全量扫描（poll 后端）+ SQLite 索引 + 只读校验。
 //
@@ -22,17 +22,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"syncer/internal/baidu"
-	"syncer/internal/config"
-	"syncer/internal/detector"
-	"syncer/internal/index"
-	"syncer/internal/sender"
+	"bdsync/internal/baidu"
+	"bdsync/internal/config"
+	"bdsync/internal/detector"
+	"bdsync/internal/index"
+	"bdsync/internal/sender"
 )
 
 // appCfg — 启动时加载的配置（flag > 配置文件 > 默认值）。
 var appCfg *config.Config
 
-// appCfgPath — 实际加载的配置文件路径（看板保存时写回该文件；空 = syncer.yaml）。
+// appCfgPath — 实际加载的配置文件路径（看板保存时写回该文件；空 = bdsync.yaml）。
 var appCfgPath string
 
 // defaultDB — 索引库路径（service.db_path，可被 --db 覆盖）。
@@ -71,7 +71,7 @@ func stripConfigArgs(args []string) []string {
 }
 
 // loadConfigFromArgs — 从 os.Args 里预解析 --config（先于 flag 解析，使配置
-// 能作为 flag 的默认值）。未指定时探测 ./syncer.yaml。
+// 能作为 flag 的默认值）。未指定时探测 ./bdsync.yaml。
 func loadConfigFromArgs(args []string) error {
 	path := ""
 	for i := 0; i < len(args); i++ {
@@ -167,30 +167,30 @@ func fillMemMetrics(res *detector.ScanResult) {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `syncer — 本地 → 百度网盘 单向备份
+	fmt.Fprint(os.Stderr, `bdsync — 本地 → 百度网盘 单向备份
 
   ★ 直接双击本 exe（不带任何参数）即可：自动打开看板，网页里填三项就能开始备份。
 
 用法:
-  syncer scan     [--root <目录>] [--db ...] [--backend auto|usn|poll] [--exclude 规则] [--walk-only] [--json]
-  syncer daemon   [--config syncer.yaml] [--db ...] [--backend auto|usn|poll]    （常驻：检测+排空+电源状态机）
-  syncer send     [--db ...] [--dry-run] [--max N]
-  syncer status   [--db ...] [--json]
-  syncer reconcile [--db ...] [--dry-run] [--prune [--days 90]]  （远端清单对账 / 历史过期清理）
-  syncer check    [--db ...] [--path 相对路径]   （下载校验内容一致性）
-  syncer meta     --remote /网盘/路径
-  syncer selftest [--db ...] [--backend auto|usn|poll]  （会向 root 写探测文件）
-  syncer validate --root <目录>
+  bdsync scan     [--root <目录>] [--db ...] [--backend auto|usn|poll] [--exclude 规则] [--walk-only] [--json]
+  bdsync daemon   [--config bdsync.yaml] [--db ...] [--backend auto|usn|poll]    （常驻：检测+排空+电源状态机）
+  bdsync send     [--db ...] [--dry-run] [--max N]
+  bdsync status   [--db ...] [--json]
+  bdsync reconcile [--db ...] [--dry-run] [--prune [--days 90]]  （远端清单对账 / 历史过期清理）
+  bdsync check    [--db ...] [--path 相对路径]   （下载校验内容一致性）
+  bdsync meta     --remote /网盘/路径
+  bdsync selftest [--db ...] [--backend auto|usn|poll]  （会向 root 写探测文件）
+  bdsync validate --root <目录>
 
-配置（就地便携：exe + syncer.yaml + index.db + logs/ 同一文件夹，可整体搬走）:
-  --config syncer.yaml   未指定时探测 <exe同目录>/syncer.yaml → ./syncer.yaml → …
+配置（就地便携：exe + bdsync.yaml + index.db + logs/ 同一文件夹，可整体搬走）:
+  --config bdsync.yaml   未指定时探测 <exe同目录>/bdsync.yaml → ./bdsync.yaml → …
   必填 pair（缺任一项拒绝启动，备份目标不许靠猜）:
     pair.local_root: "D:/YourData"    本地根目录（严格只读）
-    pair.remote:     "/your/remote/path"     网盘内路径（/ 开头）
-  service.db_path 默认 index.db（与二进制同目录）；log_file 默认 logs/syncer.log
+    pair.remote:     "/bdsync-backup"     网盘内路径（/ 开头）
+  service.db_path 默认 index.db（与二进制同目录）；log_file 默认 logs/bdsync.log
   相对路径一律以配置文件所在目录为基准解析；从任何目录调用结果一致
   凭据（BDUSS/STOKEN）只从环境变量读取，绝不进配置文件:
-  set SYNCER_COOKIE="BDUSS=xxx; STOKEN=yyy"     （或 SYNCER_BDUSS / SYNCER_STOKEN）
+  set BDSYNC_COOKIE="BDUSS=xxx; STOKEN=yyy"     （或 BDSYNC_BDUSS / BDSYNC_STOKEN）
 
 后端:
   usn   Windows 本地 NTFS：读 USN Journal，空闲零文件打开/零磁盘唤醒（design §4.2）
@@ -523,13 +523,13 @@ var memCookie atomic.Value // string
 func setCookieForRun(c string) { memCookie.Store(c) }
 
 func loadCookie() (string, error) {
-	if c := os.Getenv("SYNCER_COOKIE"); c != "" {
+	if c := os.Getenv("BDSYNC_COOKIE"); c != "" {
 		return c, nil
 	}
-	bduss := os.Getenv("SYNCER_BDUSS")
+	bduss := os.Getenv("BDSYNC_BDUSS")
 	if bduss != "" {
 		cookie := "BDUSS=" + bduss
-		if stoken := os.Getenv("SYNCER_STOKEN"); stoken != "" {
+		if stoken := os.Getenv("BDSYNC_STOKEN"); stoken != "" {
 			cookie += "; STOKEN=" + stoken
 		}
 		return cookie, nil
@@ -543,15 +543,15 @@ func loadCookie() (string, error) {
 		return c, nil
 	}
 	return "", errors.New("缺少网盘凭据。三种方式任选其一：\n" +
-		"  1) 网页向导里填写（推荐：双击 syncer.cmd → 浏览器里填）\n" +
-		"  2) 环境变量 SYNCER_COOKIE=\"BDUSS=xxx; STOKEN=yyy\"\n" +
-		"  3) 网页向导勾选『记住凭据』（DPAPI 加密存到 %APPDATA%\\syncer，不进任何配置文件）")
+		"  1) 网页向导里填写（推荐：双击 bdsync.cmd → 浏览器里填）\n" +
+		"  2) 环境变量 BDSYNC_COOKIE=\"BDUSS=xxx; STOKEN=yyy\"\n" +
+		"  3) 网页向导勾选『记住凭据』（DPAPI 加密存到 %APPDATA%\\bdsync，不进任何配置文件）")
 }
 
 func cmdSend(args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	dbPath := fs.String("db", defaultDB(), "SQLite 索引文件")
-	remote := fs.String("remote", "", "远端根目录（如 /your/remote/path；首次发送时绑定，之后复用）")
+	remote := fs.String("remote", "", "远端根目录（如 /bdsync-backup；首次发送时绑定，之后复用）")
 	dryRun := fs.Bool("dry-run", false, "只显示待传统计与列表，不联网")
 	maxFiles := fs.Int("max", 0, "本次最多上传文件数（0=不限）")
 	settle := fs.Duration("settle", time.Duration(appCfg.Sender.SettleDuration.Nanos()), "稳定性闸门时长")
@@ -619,7 +619,7 @@ func cmdSend(args []string) error {
 
 func cmdMeta(args []string) error {
 	fs := flag.NewFlagSet("meta", flag.ContinueOnError)
-	remotePath := fs.String("remote", "", "远端路径（如 /syncer-smoke/a.txt）")
+	remotePath := fs.String("remote", "", "远端路径（如 /bdsync-smoke/a.txt）")
 	appID := fs.Int("app-id", baidu.DefaultAppID, "百度 app_id")
 	if err := fs.Parse(args); err != nil {
 		return err

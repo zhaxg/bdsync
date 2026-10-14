@@ -48,7 +48,7 @@ type Client struct {
 // New — cookieStr 形如 "BDUSS=xxx; STOKEN=yyy"（STOKEN 可选，部分 pan 接口需要）。
 func New(appID int, cookieStr string) (*Client, error) {
 	if !strings.Contains(cookieStr, "BDUSS=") {
-		return nil, errors.New("cookie 缺少 BDUSS（环境变量 SYNCER_COOKIE，形如 \"BDUSS=xxx; STOKEN=yyy\"）")
+		return nil, errors.New("cookie 缺少 BDUSS（环境变量 BDSYNC_COOKIE，形如 \"BDUSS=xxx; STOKEN=yyy\"）")
 	}
 	if appID == 0 {
 		appID = DefaultAppID

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"syncer/internal/index"
-	"syncer/internal/netdiskname"
+	"bdsync/internal/index"
+	"bdsync/internal/netdiskname"
 )
 
 // Options — poll 后端参数。

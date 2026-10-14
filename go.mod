@@ -1,4 +1,4 @@
-module syncer
+module bdsync
 
 go 1.27.1
 

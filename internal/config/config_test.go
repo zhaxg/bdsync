@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoadExample(t *testing.T) {
-	cfg, err := Load("syncer.example.yaml") // 示例配置与包同目录
+	cfg, err := Load("bdsync.example.yaml") // 示例配置与包同目录
 	if err != nil {
 		t.Fatalf("示例配置应能解析: %v", err)
 	}
@@ -50,8 +50,8 @@ func TestDefaults(t *testing.T) {
 	if cfg.Service.DBPath != "index.db" {
 		t.Errorf("db_path 默认应为 index.db（与二进制同目录），得到 %q", cfg.Service.DBPath)
 	}
-	if cfg.Service.LogFile != "logs/syncer.log" {
-		t.Errorf("log_file 默认应为 logs/syncer.log，得到 %q", cfg.Service.LogFile)
+	if cfg.Service.LogFile != "logs/bdsync.log" {
+		t.Errorf("log_file 默认应为 logs/bdsync.log，得到 %q", cfg.Service.LogFile)
 	}
 }
 
@@ -65,11 +65,11 @@ func TestPairRequired(t *testing.T) {
 	if err := cfg.ValidatePair(); err == nil {
 		t.Fatal("缺 pair.remote 必须被拒绝")
 	}
-	cfg.Pair.Remote = "syncer" // 缺 / 前缀
+	cfg.Pair.Remote = "bdsync" // 缺 / 前缀
 	if err := cfg.ValidatePair(); err == nil {
 		t.Fatal("pair.remote 缺 / 前缀必须被拒绝")
 	}
-	cfg.Pair.Remote = "/syncer"
+	cfg.Pair.Remote = "/bdsync"
 	if err := cfg.ValidatePair(); err != nil {
 		t.Fatalf("完整 pair 必须通过: %v", err)
 	}
@@ -79,9 +79,9 @@ func TestPairRequired(t *testing.T) {
 // （便携性保证：从任何目录调用，结果一致）。
 func TestRelativePathsAnchoredToConfigDir(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "syncer.yaml")
-	body := "pair:\n  local_root: \"data\"\n  remote: \"/syncer\"\n" +
-		"service:\n  db_path: \"index.db\"\n  log_file: \"logs/syncer.log\"\n"
+	path := filepath.Join(dir, "bdsync.yaml")
+	body := "pair:\n  local_root: \"data\"\n  remote: \"/bdsync\"\n" +
+		"service:\n  db_path: \"index.db\"\n  log_file: \"logs/bdsync.log\"\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRelativePathsAnchoredToConfigDir(t *testing.T) {
 	}
 	want := map[string]string{
 		"db":   filepath.Join(dir, "index.db"),
-		"log":  filepath.Join(dir, "logs", "syncer.log"),
+		"log":  filepath.Join(dir, "logs", "bdsync.log"),
 		"root": filepath.Join(dir, "data"),
 	}
 	if cfg.Service.DBPath != want["db"] {

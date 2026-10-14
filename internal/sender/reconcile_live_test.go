@@ -6,19 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"syncer/internal/baidu"
-	"syncer/internal/index"
+	"bdsync/internal/baidu"
+	"bdsync/internal/index"
 )
 
 // TestReconcileAndPrune_Live — M3 真机验收：远端清单对账（清单外 → 归档）
 // 与历史过期清理。环境变量门控（同 rename_live_test）。
 func TestReconcileAndPrune_Live(t *testing.T) {
-	cookie := os.Getenv("SYNCER_COOKIE")
-	dbPath := os.Getenv("SYNCER_TEST_DB")
-	root := os.Getenv("SYNCER_TEST_ROOT")
-	remote := os.Getenv("SYNCER_TEST_REMOTE")
+	cookie := os.Getenv("BDSYNC_COOKIE")
+	dbPath := os.Getenv("BDSYNC_TEST_DB")
+	root := os.Getenv("BDSYNC_TEST_ROOT")
+	remote := os.Getenv("BDSYNC_TEST_REMOTE")
 	if cookie == "" || dbPath == "" || root == "" || remote == "" {
-		t.Skip("live test：需设置 SYNCER_COOKIE / SYNCER_TEST_DB / SYNCER_TEST_ROOT / SYNCER_TEST_REMOTE")
+		t.Skip("live test：需设置 BDSYNC_COOKIE / BDSYNC_TEST_DB / BDSYNC_TEST_ROOT / BDSYNC_TEST_REMOTE")
 	}
 	ctx := context.Background()
 

@@ -14,12 +14,12 @@ import (
 
 func credsPath() string {
 	base, _ := os.UserConfigDir()
-	return filepath.Join(base, "syncer", "credentials")
+	return filepath.Join(base, "bdsync", "credentials")
 }
 
 func saveCredentialsDPAPI(cookie string) error {
 	if strings.TrimSpace(cookie) != "" {
-		return fmt.Errorf("当前平台不提供凭据加密存储：请改用环境变量 SYNCER_COOKIE")
+		return fmt.Errorf("当前平台不提供凭据加密存储：请改用环境变量 BDSYNC_COOKIE")
 	}
 	return nil
 }

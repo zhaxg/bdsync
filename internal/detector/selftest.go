@@ -10,7 +10,7 @@ import (
 )
 
 // SelfTest 相关的通用小工具。
-// 注意：探测文件会写入 root —— 只允许显式 `syncer selftest` 命令触发，
+// 注意：探测文件会写入 root —— 只允许显式 `bdsync selftest` 命令触发，
 // 绝不随 scan/daemon 自动执行（对备份目录的只读约束，design 之外的工程约定）。
 
 func writeProbeFile(p string) error { return os.WriteFile(p, []byte("probe"), 0o600) }
@@ -25,7 +25,7 @@ func (p *Poll) SelfTest(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
-	probeRel := fmt.Sprintf(".syncer-probe-%d.tmp", time.Now().UnixNano())
+	probeRel := fmt.Sprintf(".bdsync-probe-%d.tmp", time.Now().UnixNano())
 	probeAbs := filepath.Join(walkRoot, probeRel)
 	if err := writeProbeFile(probeAbs); err != nil {
 		return fmt.Errorf("写探测文件失败（root 需可写）: %w", err)

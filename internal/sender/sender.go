@@ -35,8 +35,8 @@ import (
 	"github.com/qjfoidnh/BaiduPCS-Go/baidupcs/pcserror"
 	"github.com/qjfoidnh/BaiduPCS-Go/pcsutil/checksum"
 
-	"syncer/internal/baidu"
-	"syncer/internal/index"
+	"bdsync/internal/baidu"
+	"bdsync/internal/index"
 )
 
 // defaultContentSize — 秒传V2 的防伪切片长度（上游 DefaultContentSize = 4KB）。

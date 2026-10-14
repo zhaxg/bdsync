@@ -25,7 +25,7 @@ type Event struct {
 	OldPath string // 仅 KindRenamed
 }
 
-// Stats 后端健康指标（进 syncer status）。
+// Stats 后端健康指标（进 bdsync status）。
 type Stats struct {
 	Backend   string `json:"backend"`
 	Runs      int64  `json:"runs"`

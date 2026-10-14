@@ -13,17 +13,17 @@ import (
 	"syscall"
 	"time"
 
-	"syncer/internal/config"
-	"syncer/internal/detector"
-	"syncer/internal/index"
-	"syncer/internal/web"
+	"bdsync/internal/config"
+	"bdsync/internal/detector"
+	"bdsync/internal/index"
+	"bdsync/internal/web"
 )
 
-// trace — 诊断用分步追踪（设 SYNCER_TRACE=<文件> 开启）。
+// trace — 诊断用分步追踪（设 BDSYNC_TRACE=<文件> 开启）。
 // 存在的意义：崩溃类问题在 stderr 里常常什么都不剩（进程被直接带走），
 // 靠这个文件可以精确定位"死在哪一步"。
 func trace(format string, a ...any) {
-	p := os.Getenv("SYNCER_TRACE")
+	p := os.Getenv("BDSYNC_TRACE")
 	if p == "" {
 		return
 	}
@@ -41,7 +41,7 @@ func trace(format string, a ...any) {
 //
 //	零配置双击 → 进程不退出，127.0.0.1 看板一定起来 → 控制台打印地址
 //	  → 网页向导填「本地目录 / 远端目录 / 凭据」
-//	    → 校验通过：写 syncer.yaml，启动备份运行时（和 daemon 完全同一套代码）
+//	    → 校验通过：写 bdsync.yaml，启动备份运行时（和 daemon 完全同一套代码）
 //	    → 校验失败：页面停在向导并显示原因，人改完再点一次
 //
 // 配置失败绝不静默退出：那正是新手最容易卡住的地方。
@@ -89,7 +89,7 @@ func cmdWeb(args []string) error {
 		// 端口已被占用 = 大概率已经有一个实例在跑：给一句人话 + 直接开看板
 		if isAddrInUse(err) {
 			fmt.Println()
-			fmt.Println("  已经有 syncer 在运行（看板端口被占用）。")
+			fmt.Println("  已经有 bdsync 在运行（看板端口被占用）。")
 			fmt.Printf("  直接打开： %s\n", webAddrHint(eff))
 			fmt.Println()
 			if !*noBrowser {
@@ -107,7 +107,7 @@ func cmdWeb(args []string) error {
 
 	fmt.Println()
 	fmt.Println("  ============================================================")
-	fmt.Println("   syncer 备份服务已启动")
+	fmt.Println("   bdsync 备份服务已启动")
 	fmt.Println("  ============================================================")
 	fmt.Printf("   看板地址： %s\n", srv.URL())
 	if setupErr != nil {
@@ -234,7 +234,7 @@ func (s *setupState) state() any {
 		"db_path":         appCfg.Service.DBPath,
 		"root":            appCfg.Pair.LocalRoot,
 		"remote":          appCfg.Pair.Remote,
-		"cookie_env":      os.Getenv("SYNCER_COOKIE") != "",
+		"cookie_env":      os.Getenv("BDSYNC_COOKIE") != "",
 		"cookie_saved":    credentialsHint() != "",
 	}
 	return out
@@ -343,7 +343,7 @@ func (s *setupState) apply(payload map[string]any) (string, error) {
 		return "", fmt.Errorf("还缺少：%s", strings.Join(miss, "、"))
 	}
 	if !strings.HasPrefix(remote, "/") {
-		return "", errors.New("远端目录要以 / 开头，例如 /your/remote/path")
+		return "", errors.New("远端目录要以 / 开头，例如 /bdsync-backup")
 	}
 	if err := detector.ValidateLocalRoot(localRoot); err != nil {
 		return "", err
@@ -395,7 +395,7 @@ func (s *setupState) apply(payload map[string]any) (string, error) {
 	}
 	trace("apply: 凭据处理完成")
 
-	// 落配置（写 exe 同目录的 syncer.yaml）
+	// 落配置（写 exe 同目录的 bdsync.yaml）
 	path := s.configPath
 	if path == "" {
 		path = defaultConfigPath()
@@ -424,9 +424,9 @@ func (s *setupState) apply(payload map[string]any) (string, error) {
 
 func defaultConfigPath() string {
 	if exe, err := os.Executable(); err == nil {
-		return exe[:strings.LastIndexAny(exe, `\/`)+1] + "syncer.yaml"
+		return exe[:strings.LastIndexAny(exe, `\/`)+1] + "bdsync.yaml"
 	}
-	return "syncer.yaml"
+	return "bdsync.yaml"
 }
 
 // startService — 起备份运行时；错误回传页面（进程继续活着）。
@@ -540,7 +540,7 @@ func splitDBForNewRoot(cfg *config.Config, root string) (string, error) {
 		}
 		if _, err := os.Stat(cand); os.IsNotExist(err) {
 			cfg.Service.DBPath = cand
-			return fmt.Sprintf("检测到这份 syncer 之前备份的是别的目录（%s），已为 %s 自动新建独立索引 %s。\n"+
+			return fmt.Sprintf("检测到这份 bdsync 之前备份的是别的目录（%s），已为 %s 自动新建独立索引 %s。\n"+
 				"原索引库原地保留、未做任何改动；要接着备份原目录，把上面的本地目录改回去即可。",
 				bound, root, filepath.Base(cand)), nil
 		}

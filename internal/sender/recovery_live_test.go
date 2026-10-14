@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"syncer/internal/baidu"
-	"syncer/internal/index"
+	"bdsync/internal/baidu"
+	"bdsync/internal/index"
 )
 
 // TestRecoverArchiveIncident_Live — 误归档事故恢复演练（也是真实恢复预案）。
@@ -16,12 +16,12 @@ import (
 // 误判为不存在）。恢复思路：内容仍在服务端（.history）→ 全部重新入队 →
 // 秒传命中，零带宽重建主树。此测试固化该预案。
 func TestRecoverArchiveIncident_Live(t *testing.T) {
-	cookie := os.Getenv("SYNCER_COOKIE")
-	dbPath := os.Getenv("SYNCER_TEST_DB")
-	root := os.Getenv("SYNCER_TEST_ROOT")
-	remote := os.Getenv("SYNCER_TEST_REMOTE")
+	cookie := os.Getenv("BDSYNC_COOKIE")
+	dbPath := os.Getenv("BDSYNC_TEST_DB")
+	root := os.Getenv("BDSYNC_TEST_ROOT")
+	remote := os.Getenv("BDSYNC_TEST_REMOTE")
 	if cookie == "" || dbPath == "" || root == "" || remote == "" {
-		t.Skip("live test：需设置 SYNCER_COOKIE / SYNCER_TEST_DB / SYNCER_TEST_ROOT / SYNCER_TEST_REMOTE")
+		t.Skip("live test：需设置 BDSYNC_COOKIE / BDSYNC_TEST_DB / BDSYNC_TEST_ROOT / BDSYNC_TEST_REMOTE")
 	}
 	ctx := context.Background()
 

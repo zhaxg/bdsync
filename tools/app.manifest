@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="syncer.backup" version="0.6.0.0" processorArchitecture="*"/>
-  <description>syncer — 本地到百度网盘单向备份</description>
+  <assemblyIdentity type="win32" name="bdsync.backup" version="0.6.0.0" processorArchitecture="*"/>
+  <description>bdsync — 本地到百度网盘单向备份</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>

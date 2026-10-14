@@ -17,14 +17,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"syncer/internal/baidu"
-	"syncer/internal/config"
-	"syncer/internal/detector"
-	"syncer/internal/index"
-	"syncer/internal/logx"
-	"syncer/internal/power"
-	"syncer/internal/sender"
-	"syncer/internal/web"
+	"bdsync/internal/baidu"
+	"bdsync/internal/config"
+	"bdsync/internal/detector"
+	"bdsync/internal/index"
+	"bdsync/internal/logx"
+	"bdsync/internal/power"
+	"bdsync/internal/sender"
+	"bdsync/internal/web"
 )
 
 const version = "v0.6-web"
@@ -804,7 +804,7 @@ func saveConfigPath() string {
 	if appCfgPath != "" {
 		return appCfgPath
 	}
-	return "syncer.yaml"
+	return "bdsync.yaml"
 }
 
 func writeConfigFile(path string, cfg *config.Config) error {
@@ -812,8 +812,8 @@ func writeConfigFile(path string, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	header := "# syncer 配置（由看板保存；格式见 internal/config/syncer.example.yaml）\n" +
-		"# 凭据不进本文件：BDUSS/STOKEN 只从环境变量 SYNCER_COOKIE 读取\n"
+	header := "# bdsync 配置（由看板保存；格式见 internal/config/bdsync.example.yaml）\n" +
+		"# 凭据不进本文件：BDUSS/STOKEN 只从环境变量 BDSYNC_COOKIE 读取\n"
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append([]byte(header), b...), 0o644); err != nil {
 		return err

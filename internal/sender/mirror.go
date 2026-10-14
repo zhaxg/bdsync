@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"syncer/internal/baidu"
-	"syncer/internal/index"
+	"bdsync/internal/baidu"
+	"bdsync/internal/index"
 )
 
 // 镜像模式（config.MirrorConfig）：folderRA 主树路径清单永远等于本地清单；

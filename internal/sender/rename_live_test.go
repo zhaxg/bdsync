@@ -6,23 +6,23 @@ import (
 	"path/filepath"
 	"testing"
 
-	"syncer/internal/baidu"
-	"syncer/internal/index"
+	"bdsync/internal/baidu"
+	"bdsync/internal/index"
 )
 
 // TestRenameE2E_Live — 改名管道真机端到端（M2 验收）。
 // 沙箱内无法读 USN journal，故用 DAO 调用精确模拟 RunUsnCycle 的改名处理：
 // 本地真实改名 + st.MoveEntry / st.RewriteSubtree（usn 路径同款调用）→ Drain → 远端核对。
 //
-// 环境变量：SYNCER_COOKIE（必需）、SYNCER_TEST_DB、SYNCER_TEST_ROOT、SYNCER_TEST_REMOTE。
+// 环境变量：BDSYNC_COOKIE（必需）、BDSYNC_TEST_DB、BDSYNC_TEST_ROOT、BDSYNC_TEST_REMOTE。
 // 未设置时跳过（不进 CI）。
 func TestRenameE2E_Live(t *testing.T) {
-	cookie := os.Getenv("SYNCER_COOKIE")
-	dbPath := os.Getenv("SYNCER_TEST_DB")
-	root := os.Getenv("SYNCER_TEST_ROOT")
-	remote := os.Getenv("SYNCER_TEST_REMOTE")
+	cookie := os.Getenv("BDSYNC_COOKIE")
+	dbPath := os.Getenv("BDSYNC_TEST_DB")
+	root := os.Getenv("BDSYNC_TEST_ROOT")
+	remote := os.Getenv("BDSYNC_TEST_REMOTE")
 	if cookie == "" || dbPath == "" || root == "" || remote == "" {
-		t.Skip("live test：需设置 SYNCER_COOKIE / SYNCER_TEST_DB / SYNCER_TEST_ROOT / SYNCER_TEST_REMOTE")
+		t.Skip("live test：需设置 BDSYNC_COOKIE / BDSYNC_TEST_DB / BDSYNC_TEST_ROOT / BDSYNC_TEST_REMOTE")
 	}
 	ctx := context.Background()
 

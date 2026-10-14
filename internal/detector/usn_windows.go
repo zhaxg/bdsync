@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"syncer/internal/index"
+	"bdsync/internal/index"
 )
 
 // FSCTL 与 Reason 位（winioctl.h，见 design 附录 A）
@@ -91,9 +91,9 @@ func (u *UsnBackend) Close() error {
 }
 
 // SelfTest — 写探测文件并确认 journal 事件可达（唯一能发现"环境变了"的手段，design 硬规矩①）。
-// 只由显式 `syncer selftest` 命令触发（会向 root 写入并删除一个临时文件）。
+// 只由显式 `bdsync selftest` 命令触发（会向 root 写入并删除一个临时文件）。
 func (u *UsnBackend) SelfTest(ctx context.Context, root string) error {
-	probeRel := fmt.Sprintf(".syncer-probe-%d.tmp", time.Now().UnixNano())
+	probeRel := fmt.Sprintf(".bdsync-probe-%d.tmp", time.Now().UnixNano())
 	probeAbs := root + `\` + probeRel
 	if err := writeProbeFile(probeAbs); err != nil {
 		return fmt.Errorf("写探测文件失败: %w", err)
@@ -532,7 +532,7 @@ func decodeUTF16(b []byte) string {
 	return string(utf16.Decode(u))
 }
 
-// RunUsnSelftest — 显式自检入口（syncer selftest 用）：写探测文件并等 journal 事件。
+// RunUsnSelftest — 显式自检入口（bdsync selftest 用）：写探测文件并等 journal 事件。
 func RunUsnSelftest(ctx context.Context, root string, st *index.Store) error {
 	u, err := OpenUsn(root, st)
 	if err != nil {

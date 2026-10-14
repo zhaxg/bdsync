@@ -1,4 +1,4 @@
-# syncer — 本地 → 百度网盘 单向备份守护进程
+# bdsync — 本地 → 百度网盘 单向备份守护进程
 
 > 目标：把 43,746 文件 / 6,238 目录 / 82.9 GB 的目录树，长期、安静、低资源地备份到百度网盘。
 > **第一约束：CPU 与内存占用要小到用户察觉不到，风扇不该因此转起来。**
@@ -497,7 +497,7 @@ procSetProcessInformation.Call(
 ### 4.6 Go 运行时控制
 
 ```go
-// 启动时（cmd/syncer/main.go）
+// 启动时（cmd/bdsync/main.go）
 debug.SetGCPercent(400)        // GC 不那么频繁（默认 100）
 debug.SetMemoryLimit(256 << 20) // 软内存上限 256MB（Go 1.19+）
 ```
@@ -599,7 +599,7 @@ type Backend interface {
     // 10s 内没收到就返回错误。这是防止"调用成功但从不通知"的唯一手段。
     SelfTest(ctx context.Context, root string) error
 
-    // Stats 后端健康指标，进 syncer status
+    // Stats 后端健康指标，进 bdsync status
     Stats() Stats
 
     Close() error
@@ -626,7 +626,7 @@ internal/detector/
 
 ```go
 func (b *Backend) SelfTest(ctx context.Context, root string) error {
-    probe := filepath.Join(root, fmt.Sprintf(".syncer-probe-%s.tmp", uuid.NewString()))
+    probe := filepath.Join(root, fmt.Sprintf(".bdsync-probe-%s.tmp", uuid.NewString()))
     if err := os.WriteFile(probe, []byte("probe"), 0o600); err != nil {
         return err
     }
@@ -711,15 +711,15 @@ Linux 上的候选机制评估：
 #### systemd 集成
 
 ```ini
-# /etc/systemd/system/syncer.service
+# /etc/systemd/system/bdsync.service
 [Unit]
-Description=syncer — 百度网盘备份守护进程
+Description=bdsync — 百度网盘备份守护进程
 After=network-online.target
 
 [Service]
 Type=notify                      # 配合 sd_notify(READY=1)
 NotifyAccess=main
-ExecStart=/usr/local/bin/syncer daemon
+ExecStart=/usr/local/bin/bdsync daemon
 Restart=on-failure
 RestartSec=10
 # 静默强化
@@ -1059,7 +1059,7 @@ v1 的"绝不传播删除"升级为**镜像模式**（`mirror.enabled` 默认 tr
 
 v1 语义回退：`mirror.enabled: false` → 本地删除只标 REMOVED_LOCAL，远端原样保留。
 
-清理远端历史 → `syncer reconcile --prune`（可 `--dry-run` 预览）。
+清理远端历史 → `bdsync reconcile --prune`（可 `--dry-run` 预览）。
 
 ### 9.3 幂等与崩溃安全
 
@@ -1132,7 +1132,7 @@ Add-MpPreference -ExclusionPath "D:\BackupRoot"
 - 活跃期 `NORMAL` 或 `ABOVE_NORMAL`（用户主动触发的备份，值得优先）
 - 空闲期 `IDLE`
 
-### 11.1 明确的范围声明（写进 README 和 `syncer --help`）
+### 11.1 明确的范围声明（写进 README 和 `bdsync --help`）
 
 工具**只备份文件内容 + 修改时间**，不保存：
 
@@ -1151,7 +1151,7 @@ Add-MpPreference -ExclusionPath "D:\BackupRoot"
 ### 11.2 Linux 部署
 
 ```bash
-install -m755 syncer /usr/local/bin/syncer
+install -m755 bdsync /usr/local/bin/bdsync
 ```
 
 见 §4.10 的 systemd unit 文件。首次运行前同样要做"排除扫描器"的对等操作 —— Linux 上对应的是：
@@ -1218,7 +1218,7 @@ func Classify(e pcserror.Error) Action
 ### 零成本输出
 
 ```
-$ syncer status
+$ bdsync status
   上次备份      2 分钟前
   队列          17 文件 / 84.3 MB
   最老待传      3 分钟          ← 数据丢失敞口
@@ -1257,7 +1257,7 @@ SSE，`127.0.0.1` 监听，**默认关闭**（`--web` 或 `web.enabled` 开启�
 ```yaml
 pair:                     # ★ 必填：备份对（缺任一项 → 拒绝启动）
   local_root: "D:/YourData"   # 本地根目录（严格只读）
-  remote: "/your/remote/path"         # 网盘内路径，必须以 / 开头
+  remote: "/bdsync-backup"         # 网盘内路径，必须以 / 开头
 
 detector:
   mode: auto            # auto | usn | poll
@@ -1268,7 +1268,7 @@ detector:
   usn_poll_quiet: 5m    # usn 模式 QUIET 态的游标轮询间隔
   usn_poll_active: 10s  # usn 模式 ACTIVE 态的轮询间隔
   reconcile_interval: 24h   # ★ 强制全量对账周期（兜底，后端失效/索引损坏的保险）
-  selftest_interval: 1h     # 后端自检周期（已实现为显式 `syncer selftest` 命令）
+  selftest_interval: 1h     # 后端自检周期（已实现为显式 `bdsync selftest` 命令）
 
 sender:
   flush_interval: 5m    # ★ 最小发送间隔（从上次 drain 结束计时）
@@ -1300,7 +1300,7 @@ exclude:                # 排除规则：单组件 glob 命中任一路径组件
   # - ".stfolder/"
 
 service:
-  log_file: "logs/syncer.log"   # 相对配置文件目录 → <exe同目录>/logs/；空 = 只打 stdout
+  log_file: "logs/bdsync.log"   # 相对配置文件目录 → <exe同目录>/logs/；空 = 只打 stdout
   log_max_mb: 10
   log_keep: 7
   db_path: "index.db"           # 相对配置文件目录 → 与二进制同目录
@@ -1316,15 +1316,15 @@ web:                    # ★ 本地看板（§13；凭据绝不进配置文件�
 （甚至 U 盘）后用绝对路径启动，行为完全一致：
 
 ```
-<任意目录>/syncer/
-  ├─ syncer.exe
-  ├─ syncer.yaml      备份对在这里声明
+<任意目录>/bdsync/
+  ├─ bdsync.exe
+  ├─ bdsync.yaml      备份对在这里声明
   ├─ index.db         索引库（与二进制同目录）
-  └─ logs/syncer.log  日志与轮转（≤10MB × 7）
+  └─ logs/bdsync.log  日志与轮转（≤10MB × 7）
 ```
 
-- **配置文件发现顺序**：`--config` > `<exe 同目录>/syncer.yaml` > `./syncer.yaml` >
-  `./var/syncer.yaml` > `<exe 同目录>/var/syncer.yaml`（exe 目录优先：跟二进制一起走的那份才是本意）
+- **配置文件发现顺序**：`--config` > `<exe 同目录>/bdsync.yaml` > `./bdsync.yaml` >
+  `./var/bdsync.yaml` > `<exe 同目录>/var/bdsync.yaml`（exe 目录优先：跟二进制一起走的那份才是本意）
 - **相对路径锚定**：`db_path` / `log_file` / `pair.local_root` 的相对值一律以**配置文件所在目录**
   为基准解析，**与调用时的工作目录无关**（这是"从任何目录启动结果一致"的实现基础）
 - **备份对必填**：`pair.local_root` 与 `pair.remote` 缺任一项 → **启动即拒绝**，并打印可直接抄走的示例。

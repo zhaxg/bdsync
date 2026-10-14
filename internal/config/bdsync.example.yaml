@@ -1,19 +1,19 @@
-# syncer 配置示例（design §14）
-# 用法: syncer daemon --config syncer.yaml
+# bdsync 配置示例（design §14）
+# 用法: bdsync daemon --config bdsync.yaml
 # 优先级: 命令行 flag > 配置文件 > 默认值
-# 未指定 --config 时探测顺序：<exe 同目录>/syncer.yaml → ./syncer.yaml
-#                              → ./var/syncer.yaml → <exe 同目录>/var/syncer.yaml
+# 未指定 --config 时探测顺序：<exe 同目录>/bdsync.yaml → ./bdsync.yaml
+#                              → ./var/bdsync.yaml → <exe 同目录>/var/bdsync.yaml
 #
 # 路径约定：db_path / log_file / pair.local_root 的相对值一律以
 #           **本文件所在目录**为基准解析 → 整个文件夹可整体搬走，从任何目录调用都一致。
 #
-# ⚠ 凭据不进配置文件：BDUSS/STOKEN 只从环境变量读取（SYNCER_COOKIE）。
+# ⚠ 凭据不进配置文件：BDUSS/STOKEN 只从环境变量读取（BDSYNC_COOKIE）。
 
-# ── 备份对（必填，缺任一项 syncer 拒绝启动）────────────────────
-# 备份目标必须是显式声明的事实：syncer 不猜、不兜底、不从命令行临时绑定。
+# ── 备份对（必填，缺任一项 bdsync 拒绝启动）────────────────────
+# 备份目标必须是显式声明的事实：bdsync 不猜、不兜底、不从命令行临时绑定。
 pair:
   local_root: "D:/YourData"  # 本地根目录（严格只读）；相对路径按本文件目录解析
-  remote: "/your/remote/path"       # 网盘内路径，必须以 / 开头
+  remote: "/bdsync-backup"       # 网盘内路径，必须以 / 开头
 
 detector:
   mode: auto              # auto | usn | poll
@@ -56,13 +56,13 @@ exclude:                  # 排除规则（design §14）
 
 service:
   db_path: "index.db"              # 相对本文件目录 → <exe 同目录>/index.db
-  log_file: "logs/syncer.log"      # 相对本文件目录 → <exe 同目录>/logs/；空 = 只打 stdout
+  log_file: "logs/bdsync.log"      # 相对本文件目录 → <exe 同目录>/logs/；空 = 只打 stdout
   log_max_mb: 10                   # 单文件上限，超过轮转
   log_keep: 7                      # 保留份数（10MB × 7 ≈ 70MB 上限）
 
 # 部署形态（就地便携）：
-#   <任意目录>/syncer/
-#     ├─ syncer.exe
-#     ├─ syncer.yaml      ← 本文件，pair 在这里声明
+#   <任意目录>/bdsync/
+#     ├─ bdsync.exe
+#     ├─ bdsync.yaml      ← 本文件，pair 在这里声明
 #     ├─ index.db         ← 索引库（与二进制同目录）
-#     └─ logs/syncer.log  ← 日志与轮转
+#     └─ logs/bdsync.log  ← 日志与轮转

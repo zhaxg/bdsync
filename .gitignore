@@ -11,9 +11,9 @@ logs/
 *.log
 
 # 运行时配置（含本机绝对路径，不入库）
-# 格式样例见 internal/config/syncer.example.yaml
-syncer.yaml
-syncer.yaml.bak
+# 格式样例见 internal/config/bdsync.example.yaml
+bdsync.yaml
+bdsync.yaml.bak
 
 # 编辑器与工具缓存
 .playwright-mcp/

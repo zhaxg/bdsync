@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>syncer 备份中心</title>
+<title>bdsync 备份中心</title>
 <style>
 :root {
   --accent: #0067c0;
@@ -198,18 +198,18 @@ body.setup-mode #page-setup { padding-top: 12px; }
   <nav class="sidebar">
     <div class="brand">
       <div class="logo">
-        <svg viewBox="0 0 16 16" role="img" aria-label="syncer">
+        <svg viewBox="0 0 16 16" role="img" aria-label="bdsync">
           <path fill="#7c3aed" d="M13.25 2a.75.75 0 0 0-.75.75v2a.75.75 0 0 1-.75.75H9.56l.72-.72a.75.75 0 1 0-1.06-1.06l-2 2a.75.75 0 0 0 0 1.06l2 2a.75.75 0 1 0 1.06-1.06L9.56 7h2.19A2.25 2.25 0 0 0 14 4.75v-2a.75.75 0 0 0-.75-.75M5.72 8.22a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.75.75 0 0 1-1.06-1.06l.72-.72H1.75a.75.75 0 0 1 0-1.5h4.69l-.72-.72a.75.75 0 0 1 0-1.06"/>
         </svg>
       </div>
-      <div><b>syncer</b><small>百度网盘备份中心</small></div>
+      <div><b>bdsync</b><small>百度网盘备份中心</small></div>
     </div>
     <button class="nav-btn active" data-page="overview"><span class="ic">◧</span>概览</button>
     <button class="nav-btn" data-page="control"><span class="ic">⏻</span>运行控制</button>
     <button class="nav-btn" data-page="config"><span class="ic">⚙</span>配置</button>
     <button class="nav-btn" data-page="logs"><span class="ic">▤</span>日志</button>
     <div class="foot">
-      仅监听 127.0.0.1<br>凭据只从环境变量读取<br><span id="ver">syncer</span>
+      仅监听 127.0.0.1<br>凭据只从环境变量读取<br><span id="ver">bdsync</span>
     </div>
   </nav>
 
@@ -223,12 +223,12 @@ body.setup-mode #page-setup { padding-top: 12px; }
         <h2>1 · 备份到哪</h2>
         <div class="form">
           <div class="field" style="grid-column:1/-1">
-            <label>本地目录（只读，syncer 绝不会写入或删除这里的任何文件）</label>
+            <label>本地目录（只读，bdsync 绝不会写入或删除这里的任何文件）</label>
             <input id="s-root" placeholder="D:\YourData">
           </div>
           <div class="field">
             <label>网盘目录（以 / 开头）</label>
-            <input id="s-remote" placeholder="/your/remote/path">
+            <input id="s-remote" placeholder="/bdsync-backup">
           </div>
         </div>
         <div class="hintline">
@@ -258,7 +258,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
         </div>
         <label class="conn" style="margin-top:14px; cursor:pointer">
           <input type="checkbox" id="s-remember" checked>
-          <span>记住凭据（用 Windows DPAPI 按当前用户加密，存到 %APPDATA%\syncer，不进任何配置文件；不勾则只对本次进程有效）</span>
+          <span>记住凭据（用 Windows DPAPI 按当前用户加密，存到 %APPDATA%\bdsync，不进任何配置文件；不勾则只对本次进程有效）</span>
         </label>
       </div>
 
@@ -344,7 +344,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
         <h2>立即行动</h2>
         <div class="hintline" style="margin-top:0">
           需要立刻扫描或上传时，请在服务器上执行：<br>
-          <code style="font-family:Cascadia Mono,Consolas,monospace">syncer scan --root … / syncer send --db …</code><br>
+          <code style="font-family:Cascadia Mono,Consolas,monospace">bdsync scan --root … / bdsync send --db …</code><br>
           看板不发起扫描/上传任务（design §13：控制面只做状态机级操作）。
         </div>
       </div>
@@ -424,7 +424,7 @@ function renderRoute(page) {
   document.querySelectorAll(".page").forEach(p =>
     p.classList.toggle("active", p.id === "page-" + page));
   currentRoute = page;
-  document.title = "syncer · " + ROUTES[page];
+  document.title = "bdsync · " + ROUTES[page];
   if (page === "config") loadConfig();
 }
 function goRoute(page, replace) {
@@ -499,7 +499,7 @@ function renderStatus(s) {
   $("m-heap").textContent = fmtBytes(s.heap_bytes);
   $("m-root").textContent = s.root ?? "—";
   $("m-remote").textContent = s.remote ?? "—";
-  $("ver").textContent = (s.version ?? "syncer") + " · schema " + (s.schema ?? "?");
+  $("ver").textContent = (s.version ?? "bdsync") + " · schema " + (s.schema ?? "?");
 
   $("btn-pause").disabled = paused || stopped;
   $("btn-resume").disabled = !paused || stopped;

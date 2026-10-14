@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"syncer/internal/index"
+	"bdsync/internal/index"
 )
 
 // RunUsnSelftest — 非 Windows 无 usn 后端（design §4.10：Linux 默认 poll）。

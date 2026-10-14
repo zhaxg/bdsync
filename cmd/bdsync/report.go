@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"syncer/internal/detector"
-	"syncer/internal/index"
+	"bdsync/internal/detector"
+	"bdsync/internal/index"
 )
 
 func msSince(t time.Time) int64 { return int64(time.Since(t) / time.Millisecond) }
@@ -129,7 +129,7 @@ func printScanReport(res *detector.ScanResult, dbPath string, dbSize int64, json
 func printStatus(dbPath string, dbSize int64, root, remoteRoot, mode string, schemaVer int, pairID int64,
 	counts *index.Counts, pend *index.Pending, last *detector.ScanResult, haveStats bool) {
 
-	fmt.Printf("syncer status — %s (%s)\n", dbPath, humanBytes(dbSize))
+	fmt.Printf("bdsync status — %s (%s)\n", dbPath, humanBytes(dbSize))
 	fmt.Printf("  根目录        %s\n", root)
 	if remoteRoot != "" {
 		fmt.Printf("  远端目录      %s\n", remoteRoot)

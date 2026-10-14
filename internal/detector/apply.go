@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"syncer/internal/index"
-	"syncer/internal/netdiskname"
+	"bdsync/internal/index"
+	"bdsync/internal/netdiskname"
 )
 
 // ApplyChanges — 把变更路径集合落到索引（usn 模式专用）：

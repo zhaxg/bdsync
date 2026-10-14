@@ -292,7 +292,7 @@ func Default() *Config {
 		Service: ServiceConfig{
 			// 默认就地部署：索引库与二进制同目录，日志在 logs/ 下
 			DBPath:   "index.db",
-			LogFile:  "logs/syncer.log",
+			LogFile:  "logs/bdsync.log",
 			LogMaxMB: 10,
 			LogKeep:  7,
 		},
@@ -317,7 +317,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置 %s 失败: %w", path, err)
 	}
 	// 相对路径以**配置文件所在目录**为基准（不是 CWD）——
-	// 这样"exe + syncer.yaml + var/"整个文件夹可以放任意位置、从任意目录启动。
+	// 这样"exe + bdsync.yaml + var/"整个文件夹可以放任意位置、从任意目录启动。
 	resolveAgainst(filepath.Dir(path), cfg)
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("配置 %s 无效: %w", path, err)
@@ -357,7 +357,7 @@ func (c *Config) ValidatePair() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("配置缺少必填项：%s\n"+
-			"  备份对必须显式声明 —— syncer 拒绝在目标不明时启动。\n"+
+			"  备份对必须显式声明 —— bdsync 拒绝在目标不明时启动。\n"+
 			"  示例：\n"+
 			"    pair:\n"+
 			"      local_root: \"D:/YourData\"   # 本地根目录（严格只读）\n"+
@@ -444,10 +444,10 @@ func Parse(data []byte) (*Config, error) {
 
 // FindDefault — 未显式指定 --config 时的探测顺序（先到先得）：
 //
-//  1. <exe 所在目录>/syncer.yaml   ← 便携式：配置与二进制同目录，放哪都能跑
-//  2. ./syncer.yaml                ← 开发态：在仓库根目录直接跑
-//  3. ./var/syncer.yaml
-//  4. <exe 所在目录>/var/syncer.yaml
+//  1. <exe 所在目录>/bdsync.yaml   ← 便携式：配置与二进制同目录，放哪都能跑
+//  2. ./bdsync.yaml                ← 开发态：在仓库根目录直接跑
+//  3. ./var/bdsync.yaml
+//  4. <exe 所在目录>/var/bdsync.yaml
 //
 // exe 目录优先于 CWD：跟二进制一起走的配置才是用户预期的那个
 // （否则把 bin/ 拷到别处时会静默读到另一份配置）。
@@ -455,10 +455,10 @@ func FindDefault() string {
 	var cands []string
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		cands = append(cands, filepath.Join(dir, "syncer.yaml"),
-			filepath.Join(dir, "var", "syncer.yaml"))
+		cands = append(cands, filepath.Join(dir, "bdsync.yaml"),
+			filepath.Join(dir, "var", "bdsync.yaml"))
 	}
-	cands = append(cands, "syncer.yaml", filepath.Join("var", "syncer.yaml"))
+	cands = append(cands, "bdsync.yaml", filepath.Join("var", "bdsync.yaml"))
 	for _, p := range cands {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p

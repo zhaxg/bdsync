@@ -14,7 +14,7 @@ import (
 )
 
 // 凭据持久化：DPAPI（CryptProtectData）按当前 Windows 用户加密，
-// 落盘文件 %APPDATA%\syncer\credentials.dat 只有同一用户能解密。
+// 落盘文件 %APPDATA%\bdsync\credentials.dat 只有同一用户能解密。
 //
 // 为什么允许"记住凭据"：双击启动是主场景，用户不该每次敲环境变量；
 // 但凭据绝不能以明文躺在配置或数据目录里 —— DPAPI 把这条约束兜住了。
@@ -27,7 +27,7 @@ var (
 )
 
 const (
-	entropyPurpose = "syncer/cookie/v1"
+	entropyPurpose = "bdsync/cookie/v1"
 	dpapiFlag      = 0x01 // CRYPTPROTECT_UI_FORBIDDEN
 )
 
@@ -63,14 +63,14 @@ func bytesFromBlob(b *dataBlob) []byte {
 	return out
 }
 
-// credsPath — 凭据文件路径（%APPDATA%\syncer\credentials.dat）。
+// credsPath — 凭据文件路径（%APPDATA%\bdsync\credentials.dat）。
 func credsPath() string {
 	base := os.Getenv("APPDATA")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = home
 	}
-	return filepath.Join(base, "syncer", "credentials.dat")
+	return filepath.Join(base, "bdsync", "credentials.dat")
 }
 
 // saveCredentialsDPAPI — 加密写入；失败不阻塞（调用方降级为"仅本次会话"）。
