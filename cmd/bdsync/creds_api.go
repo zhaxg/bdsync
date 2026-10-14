@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"bdsync/internal/baidu"
 )
 
 // ── 服务模式（nssm / 计划任务 / systemd 托管）─────────────────────
@@ -103,6 +105,9 @@ func credsStatusPublic() map[string]any {
 // cookieFromPayload — 从看板载荷提取 cookie。
 //
 // 整串粘贴优先（推荐路径），其次 bduss/stoken 拼装。
+// 两个分支最后都过一次 baidu.SanitizeCookie：只留 BDUSS/STOKEN/BAIDUID，
+// 并清掉 net/http 会告警丢弃的字节（例如百度 RT 值外层的引号）——
+// 这样落盘的 credentials.dat 也是干净的，不会把几十项无关凭据带在身上。
 // 返回 empty=true 表示载荷里没给凭据（调用方自行决定是复用现有还是报错）。
 func cookieFromPayload(payload map[string]any) (cookie, warn string, empty bool, err error) {
 	raw, _ := payload["cookie"].(string)
@@ -112,19 +117,29 @@ func cookieFromPayload(payload map[string]any) (cookie, warn string, empty bool,
 
 	switch {
 	case raw != "":
-		if !strings.Contains(raw, "BDUSS=") {
+		cookie = baidu.SanitizeCookie(raw)
+		if !strings.Contains(cookie, "BDUSS=") {
 			return "", "", false, errors.New("Cookie 串里没有 BDUSS=…，请确认复制完整")
 		}
-		cookie = raw
-		if !strings.Contains(strings.ToUpper(raw), "STOKEN=") {
+		if !strings.Contains(cookie, "STOKEN=") {
 			// 实测：只有 BDUSS 时网盘列目录会被拒（-6 请重新登录）——提示但不阻断
 			warn = "这串 Cookie 里没有 STOKEN，网盘很可能拒绝列目录（实测如此）"
 		}
+		if clean := strings.TrimSpace(raw); cookie != clean {
+			// 看板贴的是浏览器整行：如实说清被丢掉了什么，别让人以为保存少了东西
+			note := "已只保留 BDUSS/STOKEN/BAIDUID，其余字段与非法字符丢弃"
+			if warn != "" {
+				warn += "；" + note
+			} else {
+				warn = note
+			}
+		}
 	case bduss != "":
-		cookie = "BDUSS=" + bduss
-		if stoken != "" {
-			cookie += "; STOKEN=" + stoken
-		} else {
+		cookie = baidu.SanitizeCookie("BDUSS=" + bduss + "; STOKEN=" + stoken)
+		if !strings.Contains(cookie, "BDUSS=") {
+			return "", "", false, errors.New("BDUSS 里没有可用的值，请确认复制完整")
+		}
+		if !strings.Contains(cookie, "STOKEN=") {
 			warn = "没填 STOKEN，网盘很可能拒绝列目录（实测如此）"
 		}
 	default:

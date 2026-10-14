@@ -49,6 +49,27 @@
   }
 }
 * { box-sizing: border-box; }
+
+/* ── 滚动条：全站统一 —— 灰色半透明细条，轨道透明，不要箭头按钮 ──
+   覆盖两种实现：Firefox/新版 Chromium 走标准属性，Chromium/Edge 走 ::-webkit-*。
+   边框留白是为了让"可见宽度"只有 6px，视觉上比默认那条窄一半。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140,140,140,.55) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { width: 0; height: 0; }
+::-webkit-scrollbar-thumb {
+  background: rgba(140,140,140,.55);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(140,140,140,.85); }
+::-webkit-scrollbar-thumb:active { background-color: rgba(155,155,155,1); }
+
 html, body { margin: 0; height: 100%; }
 body {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", sans-serif;
@@ -69,11 +90,11 @@ body {
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 12px 20px; }
 .brand .logo {
-  width: 32px; height: 32px; border-radius: 8px; flex: none;
+  width: 32px; height: 32px; border-radius: 50%; flex: none;
   display: grid; place-items: center; overflow: hidden;
   box-shadow: var(--shadow);
 }
-.brand .logo svg { width: 22px; height: 22px; display: block; }
+.brand .logo img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .brand b { font-size: 15px; font-weight: 600; }
 .brand small { display: block; color: var(--fg-2); font-size: 11px; }
 .nav-btn {
@@ -108,11 +129,14 @@ h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
 }
 .card h2 { font-size: 15px; font-weight: 600; margin: 0 0 14px; }
 .grid { display: grid; gap: 16px; }
+.grid > .card { margin-bottom: 0; }   /* grid 自带 gap，卡片不再叠加外边距（更紧凑） */
 .g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.g2s { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }  /* 卡片内紧凑两列（窄于 300px 也能成两列） */
 .g4 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 
 /* 状态徽标 */
-.state-line { display: flex; align-items: center; gap: 14px; }
+.state-line { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.state-line .btnrow { margin-left: auto; }   /* 控制按钮与状态同行、靠右（窄屏自动换行） */
 .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--fg-2); box-shadow: 0 0 0 4px rgba(0,0,0,.06); }
 .dot.ok { background: var(--ok); } .dot.run { background: var(--accent); }
 .dot.warn { background: var(--warn); } .dot.stop { background: var(--danger); }
@@ -146,6 +170,15 @@ h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
 
 /* 表单 */
 .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 18px; }
+/* 配置页基本设置：固定 3 列，「排除规则」独占第 3 列、跨 1–3 行 */
+.form.cfg { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form.cfg .ex { grid-column: 3; grid-row: 1 / span 3; }
+.form.cfg .ex textarea { flex: 1 1 auto; min-height: 140px; }
+@media (max-width: 1060px) {
+  .form.cfg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .form.cfg .ex { grid-column: 1 / -1; grid-row: auto; }   /* 放不下 3 列 → 退回整行 */
+}
+@media (max-width: 640px) { .form.cfg { grid-template-columns: 1fr; } }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12.5px; color: var(--fg-2); }
 .field input, .field textarea, .field select {
@@ -170,20 +203,31 @@ h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; }
 .conn .d { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 .conn.off .d { background: var(--danger); }
 
-/* 日志 */
+/* 日志：整页撑满浏览器高度（标题占固定高，卡片区 flex 吃掉剩余空间） */
+#page-logs.active {
+  display: flex; flex-direction: column;
+  height: calc(100vh - 76px);        /* = .main 上下 padding 28 + 48 */
+}
+#page-logs h1, #page-logs .sub { flex: none; }
+#page-logs .logcard {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; margin-bottom: 0;
+}
 .logcard { padding: 0; overflow: hidden; }
-.logbar { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--card-border); }
+.logbar { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--card-border); flex: none; flex-wrap: wrap; }
 .logbar .title { font-weight: 600; font-size: 14px; margin-right: auto; }
 .logbar label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); cursor: pointer; }
 #logpane {
   background: var(--term-bg); color: var(--term-fg);
   font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
   font-size: 12.5px; line-height: 1.55;
-  height: 460px; overflow-y: auto; padding: 12px 16px;
-  white-space: pre-wrap; word-break: break-all;
+  flex: 1 1 auto; min-height: 0;
+  overflow: auto; padding: 12px 16px;
+  white-space: pre;                  /* 默认不换行：长行横向滚动看完整 */
 }
+#logpane.wrap { white-space: pre-wrap; word-break: break-all; }  /* 勾选「自动换行」 */
 #logpane .t { color: #7a7a7a; }
-#logpane .e { color: #f48771; }   /* [-] 失败 */
+#logpane .e { color: #f85149; }   /* [-] / 失败、错误 → 红色 */
 #logpane .w { color: #dcdcaa; }   /* [!] 警告 */
 #logpane .s { color: #6cc569; }   /* [+] 成功 */
 #logpane .i { color: #9cdcfe; }   /* [~] 信息 */
@@ -201,14 +245,11 @@ body.setup-mode #page-setup { padding-top: 12px; }
   <nav class="sidebar">
     <div class="brand">
       <div class="logo">
-        <svg viewBox="0 0 16 16" role="img" aria-label="bdsync">
-          <path fill="#7c3aed" d="M13.25 2a.75.75 0 0 0-.75.75v2a.75.75 0 0 1-.75.75H9.56l.72-.72a.75.75 0 1 0-1.06-1.06l-2 2a.75.75 0 0 0 0 1.06l2 2a.75.75 0 1 0 1.06-1.06L9.56 7h2.19A2.25 2.25 0 0 0 14 4.75v-2a.75.75 0 0 0-.75-.75M5.72 8.22a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.75.75 0 0 1-1.06-1.06l.72-.72H1.75a.75.75 0 0 1 0-1.5h4.69l-.72-.72a.75.75 0 0 1 0-1.06"/>
-        </svg>
+        <img src="/favicon.png" alt="bdsync" width="32" height="32">
       </div>
       <div><b>bdsync</b><small>百度网盘备份中心</small></div>
     </div>
     <button class="nav-btn active" data-page="overview"><span class="ic">◧</span>概览</button>
-    <button class="nav-btn" data-page="control"><span class="ic">⏻</span>运行控制</button>
     <button class="nav-btn" data-page="config"><span class="ic">⚙</span>配置</button>
     <button class="nav-btn" data-page="logs"><span class="ic">▤</span>日志</button>
     <div class="foot">
@@ -291,6 +332,11 @@ body.setup-mode #page-setup { padding-top: 12px; }
             <div class="big" id="st-title">—</div>
             <div class="hint" id="st-hint">正在读取状态…</div>
           </div>
+          <div class="btnrow">
+            <button class="btn accent" id="btn-pause">⏸ 暂停</button>
+            <button class="btn" id="btn-resume">▶ 继续</button>
+            <button class="btn danger" id="btn-stop">■ 停止</button>
+          </div>
         </div>
       </div>
 
@@ -301,56 +347,46 @@ body.setup-mode #page-setup { padding-top: 12px; }
         <div class="card metric"><span class="k">上次扫描</span><span class="v" id="m-scan">—</span><span class="s" id="m-scan2">&nbsp;</span></div>
       </div>
 
+      <!-- 两张大卡等高紧凑：各三行（运行环境 2×3 / 路径 3 条） -->
       <div class="grid g2" style="margin-top:16px">
         <div class="card">
           <h2>运行环境</h2>
-          <div class="grid g2" style="gap:12px">
+          <div class="grid g2s" style="gap:8px 16px">
             <div class="metric"><span class="k">检测后端</span><span class="v" id="m-backend" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">运行时长</span><span class="v" id="m-uptime" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">内存 RSS</span><span class="v" id="m-rss" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">存活堆</span><span class="v" id="m-heap" style="font-size:16px">—</span></div>
-            <div class="metric" style="grid-column:1/-1"><span class="k">网盘凭据</span>
-              <div style="font-size:13.5px; font-weight:550" id="m-creds">—</div></div>
+            <div class="metric" style="grid-column:1/-1"><span class="k">版本</span>
+              <div style="font-size:13.5px; font-weight:550" id="m-ver">—</div></div>
           </div>
         </div>
         <div class="card">
           <h2>路径</h2>
-          <div class="metric" style="gap:10px">
-            <div><span class="k">本地根目录</span><div style="font-size:14px; font-weight:550; word-break:break-all" id="m-root">—</div></div>
-            <div><span class="k">远端目录</span><div style="font-size:14px; font-weight:550; word-break:break-all" id="m-remote">—</div></div>
+          <div class="grid" style="gap:12px">
+            <div class="metric"><span class="k">本地根目录</span><div style="font-size:14px; font-weight:550; word-break:break-all" id="m-root">—</div></div>
+            <div class="metric"><span class="k">远端目录</span><div style="font-size:14px; font-weight:550; word-break:break-all" id="m-remote">—</div></div>
+            <div class="metric"><span class="k">索引库</span><div style="font-size:14px; font-weight:550; word-break:break-all" id="m-db">—</div></div>
           </div>
         </div>
       </div>
-    </section>
 
-    <!-- 控制 -->
-    <section class="page" id="page-control">
-      <h1>运行控制</h1>
-      <p class="sub">暂停只影响检测与排空；停止会结束进程</p>
-      <div class="card">
-        <h2>当前状态</h2>
-        <div class="state-line" style="margin-bottom:18px">
-          <div class="dot" id="ctl-dot"></div>
-          <div><div class="big" id="ctl-title" style="font-size:20px">—</div>
-          <div class="hint" id="ctl-hint">&nbsp;</div></div>
+      <!-- 原「运行控制」页的其余信息：合并到概览最下面 -->
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card">
+          <h2>控制说明</h2>
+          <div class="hintline" style="margin-top:0">
+            · 暂停：不再扫描、不再上传；已进行的分片会自然收尾。<br>
+            · 继续：立即恢复检测（下个周期生效）。<br>
+            · 停止：进程优雅退出。若由任务计划程序/systemd 托管并配置了自动重启，会被再次拉起。
+          </div>
         </div>
-        <div class="btnrow">
-          <button class="btn accent" id="btn-pause">⏸ 暂停</button>
-          <button class="btn" id="btn-resume">▶ 继续</button>
-          <button class="btn danger" id="btn-stop">■ 停止</button>
-        </div>
-        <div class="hintline">
-          · 暂停：不再扫描、不再上传；已进行的分片会自然收尾。<br>
-          · 继续：立即恢复检测（下个周期生效）。<br>
-          · 停止：进程优雅退出。若由任务计划程序/systemd 托管并配置了自动重启，会被再次拉起。
-        </div>
-      </div>
-      <div class="card">
-        <h2>立即行动</h2>
-        <div class="hintline" style="margin-top:0">
-          需要立刻扫描或上传时，请在服务器上执行：<br>
-          <code style="font-family:Cascadia Mono,Consolas,monospace">bdsync scan --root … / bdsync send --db …</code><br>
-          看板不发起扫描/上传任务（design §13：控制面只做状态机级操作）。
+        <div class="card">
+          <h2>立即行动</h2>
+          <div class="hintline" style="margin-top:0">
+            需要立刻扫描或上传时，请在服务器上执行：<br>
+            <code style="font-family:Cascadia Mono,Consolas,monospace">bdsync scan --root … / bdsync send --db …</code><br>
+            看板不发起扫描/上传任务（design §13：控制面只做状态机级操作）。
+          </div>
         </div>
       </div>
     </section>
@@ -361,13 +397,13 @@ body.setup-mode #page-setup { padding-top: 12px; }
       <p class="sub">修改会写入配置文件；间隔类立即生效，结构性修改需重启</p>
       <div class="card">
         <h2>基本设置</h2>
-        <div class="form">
+        <div class="form cfg">
           <div class="field"><label>检测间隔（poll 模式扫描）</label><input id="c-poll" placeholder="5m"></div>
           <div class="field"><label>发送间隔（flush_interval）</label><input id="c-flush" placeholder="5m"></div>
-          <div class="field"><label>稳定性闸门（settle）</label><input id="c-settle" placeholder="10s"></div>
           <div class="field"><label>上传并发上限</label><input id="c-conc" type="number" min="1" max="64" placeholder="12"></div>
+          <div class="field"><label>稳定性闸门（settle）</label><input id="c-settle" placeholder="10s"></div>
           <div class="field"><label>静默回 QUIET 阈值</label><input id="c-idle" placeholder="5m"></div>
-          <div class="field"><label>排除规则（每行一条）</label><textarea id="c-exclude" placeholder="*.tmp&#10;~$*&#10;.stfolder/"></textarea></div>
+          <div class="field ex"><label>排除规则（每行一条）</label><textarea id="c-exclude" placeholder="*.tmp&#10;~$*&#10;.stfolder/"></textarea></div>
         </div>
         <div class="btnrow" style="margin-top:16px">
           <button class="btn accent" id="btn-save">保存配置</button>
@@ -386,17 +422,11 @@ body.setup-mode #page-setup { padding-top: 12px; }
       </div>
       <div class="card">
         <h2>网盘凭据</h2>
-        <div class="metric" style="gap:6px; margin-bottom:14px">
-          <div><span class="k">当前来源</span>
-            <div style="font-size:14px; font-weight:550" id="k-source">—</div></div>
-          <div><span class="k">存储位置</span>
-            <div style="font-size:13px; word-break:break-all" id="k-path">—</div></div>
-        </div>
         <div class="form">
           <div class="field" style="grid-column:1/-1">
             <label>新的 Cookie（整行粘贴，含 <code>BDUSS=</code> 与 <code>STOKEN=</code>）</label>
             <input id="k-cookie" autocomplete="off" spellcheck="false"
-                   placeholder="BDUSS=xxx; STOKEN=yyy  —— 留空则不修改">
+                   placeholder="整行粘贴 —— 只保留 BDUSS / STOKEN / BAIDUID，其余字段自动丢弃；留空则不修改">
           </div>
         </div>
         <label class="conn" style="margin-top:10px; cursor:pointer">
@@ -412,7 +442,8 @@ body.setup-mode #page-setup { padding-top: 12px; }
           cookie 会过期（表现为网盘报 <code>-6 请重新登录</code> 或 <code>31030</code>）。
           这里贴一条新的 → 保存 → 备份运行时自动重启换上，**不用重走向导、不用改配置文件**。<br>
           怎么拿：浏览器登录 pan.baidu.com → F12 →「网络」→ 刷新 → 点开任意请求 →「请求头」→
-          复制 <code>cookie</code> 整行粘进来。
+          复制 <code>cookie</code> 整行粘进来 —— 整串里只有 <code>BDUSS</code> / <code>STOKEN</code> /
+          <code>BAIDUID</code> 会被保留，其余几十个无关字段一律丢弃（少存一半，也不会把无关凭据带在身上）。
         </div>
       </div>
     </section>
@@ -420,10 +451,11 @@ body.setup-mode #page-setup { padding-top: 12px; }
     <!-- 日志 -->
     <section class="page" id="page-logs">
       <h1>日志</h1>
-      <p class="sub">实时流（SSE）· 最多保留 500 行 · 心跳 15s</p>
+      <p class="sub">实时流（SSE）· 最多保留 500 行 · 心跳 15s · 默认不换行（长行横向滚动）</p>
       <div class="card logcard">
         <div class="logbar">
           <span class="title">运行日志</span>
+          <label><input type="checkbox" id="logwrap">自动换行</label>
           <label><input type="checkbox" id="autoscroll" checked>自动滚动</label>
           <button class="btn" id="btn-clear" style="height:28px; padding:0 12px">清屏</button>
         </div>
@@ -438,27 +470,20 @@ body.setup-mode #page-setup { padding-top: 12px; }
 const $ = id => document.getElementById(id);
 let logSeq = -1, paused = false, stopping = false, lastStatusAt = 0, es = null;
 
-/* 凭据来源的展示文案（顶部声明：renderStatus 与凭据卡片都会用，避免 TDZ 顺序问题） */
-const CRED_SRC = {
-  env:     ["环境变量 BDSYNC_COOKIE", "ok"],
-  file:    ["本地文件 credentials.dat", "ok"],
-  session: ["仅本次进程（未保存）", "warn"],
-  none:    ["未设置 —— 备份无法运行", "err"],
-};
-
 /* ── 路由（hash）：页面归属的唯一真相 ──
    之前用"点按钮就 toggle class"，导致多页可能同时 active（轮询一冲就重演）。
-   现在 URL 即状态：#/overview #/control #/config #/logs，刷新/前进后退都对得上。 */
+   现在 URL 即状态：#/overview #/config #/logs，刷新/前进后退都对得上。
+   （旧链接 #/control 仍兼容：运行控制已并入概览 → 自动落到 #/overview） */
 const ROUTES = {
   overview: "概览",
-  control: "运行控制",
   config: "配置",
   logs: "日志",
 };
 let currentRoute = null;
 
 function parseHash() {
-  const key = (location.hash || "").replace(/^#\/?/, "").trim();
+  let key = (location.hash || "").replace(/^#\/?/, "").trim();
+  if (key === "control") key = "overview";
   return ROUTES[key] ? key : "overview";
 }
 function renderRoute(page) {
@@ -469,7 +494,7 @@ function renderRoute(page) {
     p.classList.toggle("active", p.id === "page-" + page));
   currentRoute = page;
   document.title = "bdsync · " + ROUTES[page];
-  if (page === "config") { loadConfig(); loadCreds(); }
+  if (page === "config") loadConfig();
 }
 function goRoute(page, replace) {
   const key = ROUTES[page] ? page : "overview";
@@ -483,7 +508,13 @@ function goRoute(page, replace) {
 // 向导态下路由不生效（只有一个页面）
 document.querySelectorAll(".nav-btn").forEach(b =>
   b.addEventListener("click", () => { if (!setupMode) goRoute(b.dataset.page); }));
-window.addEventListener("hashchange", () => { if (!setupMode) renderRoute(parseHash()); });
+window.addEventListener("hashchange", () => {
+  if (setupMode) return;
+  // 旧链接 #/control → 归一成 #/overview（运行控制已并入概览）
+  if ((location.hash || "").replace(/^#\/?/, "").trim() === "control")
+    history.replaceState(null, "", "#/overview");
+  renderRoute(parseHash());
+});
 
 /* ── 状态拉取（客户端节流：≥1s 一次，满足 design §13 1Hz 上限） ── */
 async function fetchStatus(force) {
@@ -520,18 +551,13 @@ function renderStatus(s) {
   const state = s.paused ? "已暂停" : s.stopped ? "已停止" : (s.active ? "活跃传输中" : "空闲运行");
   const dotCls = s.paused ? "warn" : s.stopped ? "stop" : (s.active ? "run" : "ok");
   $("st-dot").className = "dot " + dotCls;
-  $("ctl-dot").className = "dot " + dotCls;
   $("st-title").textContent = state;
-  $("ctl-title").textContent = state;
   $("st-hint").textContent = s.paused
     ? "检测与排空已暂停 —— 队列保持不变"
-    : s.stopped ? (s.error ? "启动失败：" + s.error : "进程已停止") :
+    : s.stopped ? (s.error
+        ? "启动失败：" + s.error + " —— cookie 过期时去「配置 → 网盘凭据」贴一条新的即可"
+        : "进程已停止") :
       (s.active ? "有变更正在处理，处于 NORMAL 优先级 + CPU 80% 上限" : "IDLE 优先级 + CPU 上限 " + (s.quiet_cap ?? 5) + "%，几乎不消耗资源");
-  $("ctl-hint").textContent = s.paused ? "恢复后将在下个检测周期继续" : (s.active ? "正在进行上传或扫描" : "保持静默，按周期检测");
-  if (s.error && s.stopped) {
-    $("ctl-hint").innerHTML = "<b style='color:var(--danger)'>" + escapeHtml(s.error) + "</b>" +
-      " —— cookie 过期时去「配置 → 网盘凭据」贴一条新的即可。";
-  }
 
   $("m-pend").textContent = fmtBytes(s.pending?.bytes);
   $("m-pend2").textContent = (s.pending?.count ?? 0) + " 个文件" + (s.pending?.deferred ? "（" + s.pending.deferred + " 推迟中）" : "");
@@ -547,11 +573,8 @@ function renderStatus(s) {
   $("m-heap").textContent = fmtBytes(s.heap_bytes);
   $("m-root").textContent = s.root ?? "—";
   $("m-remote").textContent = s.remote ?? "—";
-  {
-    const [label, cls] = CRED_SRC[s.creds] || ["—", "warn"];
-    $("m-creds").innerHTML = '<span class="chip ' + cls + '">' + escapeHtml(label) + "</span>";
-  }
-  $("ver").textContent = (s.version ?? "bdsync") + " · schema " + (s.schema ?? "?");
+  $("m-db").textContent = s.db_path ?? "—";
+  $("m-ver").textContent = $("ver").textContent = (s.version ?? "bdsync") + " · schema " + (s.schema ?? "?");
 
   $("btn-pause").disabled = paused || stopped;
   $("btn-resume").disabled = !paused || stopped;
@@ -578,6 +601,27 @@ $("btn-stop").onclick = () => control("stop");
 
 /* ── 日志 ── */
 const pane = $("logpane");
+
+/* 自动换行：**默认不换行**（长行横向滚动看完整），勾选才折行；选择记在本地 */
+const WRAP_KEY = "bdsync.log.wrap";
+function applyWrap() { pane.classList.toggle("wrap", !!$("logwrap").checked); }
+try { $("logwrap").checked = localStorage.getItem(WRAP_KEY) === "1"; } catch (e) { $("logwrap").checked = false; }
+applyWrap();
+$("logwrap").onchange = () => {
+  try { localStorage.setItem(WRAP_KEY, $("logwrap").checked ? "1" : "0"); } catch (e) {}
+  applyWrap();
+  pane.scrollTop = pane.scrollHeight; // 折行后高度变了，留在底部
+};
+
+/* 行着色：[-] 前缀，或正文含"失败/错误/出错/致命" → 一律红色 */
+function logClass(m) {
+  if (/^\[-\]/.test(m) || /失败|错误|出错|致命|panic|fatal/i.test(m)) return "e";
+  if (/^\[!\]/.test(m)) return "w";
+  if (/^\[\+\]/.test(m)) return "s";
+  if (/^\[~\]|^\[=\]|^\[\.\]/.test(m)) return "i";
+  if (/^\[(状态|drain|scan|usn|看板)/.test(m)) return "m";
+  return "";
+}
 function appendLog(l) {
   if (logSeq >= 0 && l.seq <= logSeq) return;
   logSeq = l.seq;
@@ -586,8 +630,7 @@ function appendLog(l) {
   const div = document.createElement("div");
   const t = new Date(l.t);
   const hh = String(t.getHours()).padStart(2,"0") + ":" + String(t.getMinutes()).padStart(2,"0") + ":" + String(t.getSeconds()).padStart(2,"0");
-  const cls = /^\[-\]/.test(l.msg) ? "e" : /^\[!\]/.test(l.msg) ? "w" : /^\[\+\]/.test(l.msg) ? "s"
-            : /^\[~\]|^\[=\]|^\[\.\]/.test(l.msg) ? "i" : /^\[(状态|drain|scan|usn|看板)/.test(l.msg) ? "m" : "";
+  const cls = logClass(l.msg);
   div.innerHTML = '<span class="t">' + hh + '</span>  ' + (cls ? '<span class="' + cls + '">' + escapeHtml(l.msg) + '</span>' : escapeHtml(l.msg));
   pane.appendChild(div);
   while (pane.childElementCount > 500) pane.removeChild(pane.firstChild);
@@ -675,7 +718,7 @@ async function loadSetup(force) {
   if (!force && needSetup === setupMode) return;
   setupMode = needSetup;
   document.body.classList.toggle("setup-mode", needSetup);
-  if (!needSetup) { showShell(); loadCreds(); return; }
+  if (!needSetup) { showShell(); return; }
   // 向导模式：只留向导页（侧栏由 CSS 隐藏；路由让位）
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -741,14 +784,6 @@ $("btn-probe").onclick = async () => {
 };
 
 /* ── 网盘凭据（cookie 过期时就地换） ── */
-async function loadCreds() {
-  let d = null;
-  try { d = await (await fetch("/api/credentials")).json(); } catch (e) { return; }
-  if (!d || !d.ok) return;
-  const [label, cls] = CRED_SRC[d.source] || ["未知", "warn"];
-  $("k-source").innerHTML = '<span class="chip ' + cls + '">' + escapeHtml(label) + "</span>";
-  $("k-path").textContent = d.path || "（不保存）";
-}
 $("btn-creds").onclick = async () => {
   const v = $("k-cookie").value.trim();
   if (!v) { chips(["请先粘贴新的 Cookie"], "warn", "", "creds-chips"); return; }
@@ -762,7 +797,7 @@ $("btn-creds").onclick = async () => {
     if (!r.ok) { chips([r.error || "保存失败"], "err", "", "creds-chips"); return; }
     $("k-cookie").value = "";
     chips([r.message || "凭据已更新"], "ok", "", "creds-chips");
-    loadCreds(); fetchStatus(true);
+    fetchStatus(true);
   } catch (e) { chips(["提交失败: " + e], "err", "", "creds-chips"); }
   finally { btn.disabled = false; }
 };
@@ -775,14 +810,13 @@ $("btn-creds-clear").onclick = async () => {
     })).json();
     chips(r.ok ? [r.message || "已清除"] : [r.error || "清除失败"],
           r.ok ? "ok" : "err", "", "creds-chips");
-    loadCreds();
+    fetchStatus(true);
   } catch (e) { chips(["清除失败: " + e], "err", "", "creds-chips"); }
 };
 
 /* ── 启动 ── */
 loadSetup(true);                 // 强制判定一次：向导态 or 控制台
 loadConfig();
-loadCreds();
 fetchStatus(true);
 setInterval(() => fetchStatus(false), 3000); // 客户端侧 3s 兜底刷新
 setInterval(() => loadSetup(false), 4000);   // 状态变化时（配置成功）自动离开向导

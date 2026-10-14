@@ -268,6 +268,8 @@ func isLoopback(host string) bool {
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// HTML 内嵌在二进制里：换版本后刷新就该看到新界面，别让浏览器拿缓存糊弄人
+	w.Header().Set("Cache-Control", "no-store")
 	w.Write(pageHTML)
 }
 

@@ -650,6 +650,7 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 			"backend":    rt.backend,
 			"root":       rt.localRoot,
 			"remote":     rt.remoteRoot,
+			"db_path":    snap.cfg.Service.DBPath,
 			"paused":     snap.paused,
 			"stopped":    rt.stopping.Load(),
 			"active":     snap.active,

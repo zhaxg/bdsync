@@ -364,6 +364,7 @@ func (s *setupState) status() any {
 		"error":     errText(svcErr),
 		"root":      appCfg.Pair.LocalRoot,
 		"remote":    appCfg.Pair.Remote,
+		"db_path":   appCfg.Service.DBPath,
 		"creds":     credsSource(),
 		"pending":   map[string]any{"count": 0, "bytes": 0},
 		"rss_bytes": liveHeap(),

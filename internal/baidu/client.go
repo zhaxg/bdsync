@@ -47,6 +47,10 @@ type Client struct {
 
 // New — cookieStr 形如 "BDUSS=xxx; STOKEN=yyy"（STOKEN 可选，部分 pan 接口需要）。
 func New(appID int, cookieStr string) (*Client, error) {
+	// 统一过一遍规范化：只留 BDUSS/STOKEN/BAIDUID，并清掉 net/http 会告警丢弃的非法
+	// 字节（老版本把浏览器整串 cookie 存进 credentials.dat，其中 RT 的值带引号，
+	// 每次请求都会在日志里刷一行 invalid byte '"' in Cookie.Value）。
+	cookieStr = SanitizeCookie(cookieStr)
 	if !strings.Contains(cookieStr, "BDUSS=") {
 		return nil, errors.New("cookie 缺少 BDUSS（环境变量 BDSYNC_COOKIE，形如 \"BDUSS=xxx; STOKEN=yyy\"）")
 	}
