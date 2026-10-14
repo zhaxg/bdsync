@@ -1,0 +1,21 @@
+# 构建产物与运行时目录（可执行文件、索引库、日志都在这里）
+/bin/
+*.exe
+*.test
+
+# 运行期数据库 / WAL / 日志
+*.db
+*.db-shm
+*.db-wal
+logs/
+*.log
+
+# 运行时配置（含本机绝对路径，不入库）
+# 格式样例见 internal/config/syncer.example.yaml
+syncer.yaml
+syncer.yaml.bak
+
+# 编辑器与工具缓存
+.playwright-mcp/
+.vscode/
+.idea/

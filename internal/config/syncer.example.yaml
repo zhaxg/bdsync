@@ -1,0 +1,68 @@
+# syncer 配置示例（design §14）
+# 用法: syncer daemon --config syncer.yaml
+# 优先级: 命令行 flag > 配置文件 > 默认值
+# 未指定 --config 时探测顺序：<exe 同目录>/syncer.yaml → ./syncer.yaml
+#                              → ./var/syncer.yaml → <exe 同目录>/var/syncer.yaml
+#
+# 路径约定：db_path / log_file / pair.local_root 的相对值一律以
+#           **本文件所在目录**为基准解析 → 整个文件夹可整体搬走，从任何目录调用都一致。
+#
+# ⚠ 凭据不进配置文件：BDUSS/STOKEN 只从环境变量读取（SYNCER_COOKIE）。
+
+# ── 备份对（必填，缺任一项 syncer 拒绝启动）────────────────────
+# 备份目标必须是显式声明的事实：syncer 不猜、不兜底、不从命令行临时绑定。
+pair:
+  local_root: "D:/YourData"  # 本地根目录（严格只读）；相对路径按本文件目录解析
+  remote: "/your/remote/path"       # 网盘内路径，必须以 / 开头
+
+detector:
+  mode: auto              # auto | usn | poll
+                             #   auto → Windows 本地 NTFS 自动选 usn，其余 poll
+  poll_interval: 5m       # poll 模式扫描间隔
+  usn_poll_quiet: 5m      # usn QUIET 态游标轮询
+  usn_poll_active: 10s    # usn ACTIVE 态轮询
+  reconcile_interval: 24h # 强制全量对账周期（兜底保险丝，design §4.9）
+
+sender:
+  flush_interval: 5m      # 最小发送间隔（从上次 drain 结束计时）
+  flush_bytes: 2GB        # 高水位：队列超此立即触发
+  min_gap: 30s            # 两轮 drain 之间的最小间隔
+  concurrency: 12         # 最大并发（AIMD 起步 min(12, 上限)，遇限流减半）
+  settle_duration: 10s    # 稳定性闸门：变更后须静默这么久才上传
+  policy: overwrite       # overwrite | skip | rsync
+
+quota:                    # 静默控制（design §4.4/4.5）
+  idle_threshold: 5m      # 静默多久回 QUIET（滞回）
+  quiet_cpu_cap: 5        # QUIET 态 CPU 硬上限 %（Job Object；Linux 用 systemd）
+  active_cpu_cap: 80      # ACTIVE 态 CPU 硬上限 %
+
+policy:
+  propagate_delete: false # 历史遗留字段：必须 false（删除的传播由 mirror 模式接管）
+  rapid_upload: true      # 秒传优先
+
+mirror:                   # 镜像模式：folderRA ≡ folderLA + 远端历史（默认开启）
+  enabled: true           # true=主树路径清单永远等于本地；旧版/删除项归档到 history_dir
+  history_dir: ".history" # 远端历史根目录（RA 内单级目录名，本地不允许存在同名目录）
+  history_days: 90        # 保留期；0=永久保留；到期整日期目录清理
+  on_rename: mv           # mv=远端直接改名（零污染零带宽）| history=归档+重传
+  remote_reconcile: 24h   # 远端清单对账周期：RA 中不在本地清单的路径 → 归档
+
+exclude:                  # 排除规则（design §14）
+  # 单组件 glob 命中路径任一组件即排除（深度不限）；带 / 的按整路径匹配
+  # - "*.tmp"
+  # - "~$*"
+  # - ".stfolder/"
+  # - "node_modules"
+
+service:
+  db_path: "index.db"              # 相对本文件目录 → <exe 同目录>/index.db
+  log_file: "logs/syncer.log"      # 相对本文件目录 → <exe 同目录>/logs/；空 = 只打 stdout
+  log_max_mb: 10                   # 单文件上限，超过轮转
+  log_keep: 7                      # 保留份数（10MB × 7 ≈ 70MB 上限）
+
+# 部署形态（就地便携）：
+#   <任意目录>/syncer/
+#     ├─ syncer.exe
+#     ├─ syncer.yaml      ← 本文件，pair 在这里声明
+#     ├─ index.db         ← 索引库（与二进制同目录）
+#     └─ logs/syncer.log  ← 日志与轮转

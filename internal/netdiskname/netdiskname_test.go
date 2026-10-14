@@ -1,0 +1,55 @@
+package netdiskname
+
+import "testing"
+
+func TestValidate(t *testing.T) {
+	valid := []string{
+		"", ".", "a.txt", "中文文件.txt", "emoji🎉.bin", "space in name.txt",
+		"archive.tar.gz", ".hidden", "COM10.txt", "COM1x.txt", "lpt0.dat",
+		"a/b/c.txt", "CONSOLES.txt", "COM123", "LPT³⁴",
+	}
+	for _, p := range valid {
+		if err := Validate(p); err != nil {
+			t.Errorf("Validate(%q) = %v, 期望通过", p, err)
+		}
+	}
+
+	invalid := []struct {
+		path string
+		why  string
+	}{
+		{"a:b.txt", "非法字符"},
+		{"a*b.txt", "非法字符"},
+		{"a?b.txt", "非法字符"},
+		{`a\b.txt`, "反斜杠"},
+		{`a"b.txt`, "引号"},
+		{"a<b>.txt", "尖括号"},
+		{"a|b.txt", "竖线"},
+		{"trailing.", "结尾点"},
+		{"trailing ", "结尾空格"},
+		{" leading.txt", "开头空格"},
+		{"CON", "保留名"},
+		{"con.txt", "保留名（基名）"},
+		{"NUL.log", "保留名"},
+		{"nul.txt.bak", "保留名（首点前基名，与 Windows RtlIsDosDeviceName 一致）"},
+		{"com1.dat", "保留名"},
+		{"LPT9", "保留名"},
+		{"COM¹", "上标变体保留名（COM¹ → com1）"},
+		{"lpt³.txt", "上标变体保留名（lpt³ → lpt3）"},
+		{"sub/COM2.txt", "子目录保留名"},
+	}
+	for _, c := range invalid {
+		if err := Validate(c.path); err == nil {
+			t.Errorf("Validate(%q) 通过了, 期望拦截（%s）", c.path, c.why)
+		}
+	}
+}
+
+func TestMarked(t *testing.T) {
+	if !Marked(ErrPrefix + "x") {
+		t.Error("Marked 应识别本包前缀")
+	}
+	if Marked("分片 1/3 失败") {
+		t.Error("Marked 不应误判普通错误")
+	}
+}
