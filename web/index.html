@@ -72,7 +72,7 @@
 
 html, body { margin: 0; height: 100%; }
 body {
-  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", sans-serif;
+  font-family: "IBM Plex Sans Var", "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei UI", sans-serif;
   font-size: 14px; color: var(--fg);
   background:
     radial-gradient(1000px 500px at 85% -10%, rgba(0,103,192,.10), transparent 60%),
@@ -253,7 +253,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
     <button class="nav-btn" data-page="config"><span class="ic">⚙</span>配置</button>
     <button class="nav-btn" data-page="logs"><span class="ic">▤</span>日志</button>
     <div class="foot">
-      仅监听 127.0.0.1<br>凭据存二进制同目录 credentials.dat<br><span id="ver">bdsync</span>
+      <span id="ver">bdsync</span>
     </div>
   </nav>
 
@@ -302,7 +302,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
         </div>
         <label class="conn" style="margin-top:14px; cursor:pointer">
           <input type="checkbox" id="s-remember" checked>
-          <span>记住凭据（明文存到二进制同目录 credentials.dat，方便换机/搬目录直接用；不进任何配置文件。不勾则只对本次进程有效）</span>
+          <span>记住凭据（下次启动免重填）</span>
         </label>
       </div>
 
@@ -431,7 +431,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
         </div>
         <label class="conn" style="margin-top:10px; cursor:pointer">
           <input type="checkbox" id="k-remember" checked>
-          <span>保存到二进制同目录 <code>credentials.dat</code>（明文文件，不进配置文件）</span>
+          <span>记住凭据（下次启动免重填）</span>
         </label>
         <div class="btnrow" style="margin-top:14px">
           <button class="btn accent" id="btn-creds">更新凭据</button>
@@ -574,7 +574,7 @@ function renderStatus(s) {
   $("m-root").textContent = s.root ?? "—";
   $("m-remote").textContent = s.remote ?? "—";
   $("m-db").textContent = s.db_path ?? "—";
-  $("m-ver").textContent = $("ver").textContent = (s.version ?? "bdsync") + " · schema " + (s.schema ?? "?");
+  $("m-ver").textContent = $("ver").textContent = s.version ?? "bdsync";
 
   $("btn-pause").disabled = paused || stopped;
   $("btn-resume").disabled = !paused || stopped;
