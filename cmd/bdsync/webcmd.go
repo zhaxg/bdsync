@@ -15,7 +15,7 @@ import (
 	"bdsync/internal/config"
 	"bdsync/internal/detector"
 	"bdsync/internal/index"
-	"bdsync/internal/web"
+	"bdsync/web"
 )
 
 // trace — 诊断用分步追踪（设 BDSYNC_TRACE=<文件> 开启）。

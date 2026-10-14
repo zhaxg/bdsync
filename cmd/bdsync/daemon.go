@@ -23,7 +23,7 @@ import (
 	"bdsync/internal/logx"
 	"bdsync/internal/power"
 	"bdsync/internal/sender"
-	"bdsync/internal/web"
+	"bdsync/web"
 )
 
 const version = "v0.6-web"

@@ -25,6 +25,14 @@ import (
 //go:embed index.html
 var pageHTML []byte
 
+// 图标（与 tools/app.{ico,png} 同源，go:embed 不能引用包外文件故复制一份）。
+//
+//go:embed favicon.ico
+var faviconICO []byte
+
+//go:embed favicon.png
+var faviconPNG []byte
+
 const (
 	ringCap     = 500 // 日志环形缓冲（design §13 低开销）
 	clientBuf   = 128 // 每连接缓冲（满了丢弃，重连可 backfill）
@@ -189,6 +197,8 @@ func (s *Server) WithCreds(io CredsIO) *Server {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.withLocal(s.handlePage))
+	mux.HandleFunc("/favicon.ico", s.withLocal(s.handleFaviconICO))
+	mux.HandleFunc("/favicon.png", s.withLocal(s.handleFaviconPNG))
 	mux.HandleFunc("/api/status", s.withLocal(s.handleStatus))
 	mux.HandleFunc("/api/logs", s.withLocal(s.handleLogs))
 	mux.HandleFunc("/api/events", s.withLocal(s.handleSSE))
@@ -259,6 +269,20 @@ func isLoopback(host string) bool {
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(pageHTML)
+}
+
+// handleFaviconICO / handleFaviconPNG — 看板图标。
+// 浏览器默认先探 /favicon.ico，再看页面里的 <link rel="icon">，两个都给上。
+func (s *Server) handleFaviconICO(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(faviconICO)
+}
+
+func (s *Server) handleFaviconPNG(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(faviconPNG)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
