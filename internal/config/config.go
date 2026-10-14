@@ -1,8 +1,8 @@
 // Package config — YAML 配置（design §14）。
 //
 // 优先级：命令行 flag > 配置文件 > 默认值。
-// 安全约束：凭据（BDUSS/STOKEN）**只从环境变量读取**，配置文件里不允许出现
-// ——防止凭据随配置文件被拷走/提交。
+// 安全约束：凭据（BDUSS/STOKEN）**绝不进配置文件**——防止凭据随配置文件被拷走/提交。
+// 来源优先级：环境变量 > 二进制同目录 credentials.dat（明文）> 看板录入
 package config
 
 import (
@@ -247,6 +247,12 @@ type ServiceConfig struct {
 	LogFile  string `yaml:"log_file"`
 	LogMaxMB int    `yaml:"log_max_mb"`
 	LogKeep  int    `yaml:"log_keep"`
+	// Initialized — 首次配置完成标记（向导保存时置 true）。
+	//
+	// 有它：双击直接进服务态，凭据过期时进控制台用「凭据」卡片修复，不再走一遍向导。
+	// 没它（老配置）：只要配置文件存在且 pair 齐全，也按已初始化处理。
+	// 语义只问"填过没有"，不问"能不能跑起来"——后者由运行时把错误显示在看板上。
+	Initialized bool `yaml:"initialized"`
 }
 
 // WebConfig — 看板（design §13：SSE、127.0.0.1、默认关闭、1Hz 上限）。

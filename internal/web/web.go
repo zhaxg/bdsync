@@ -145,6 +145,18 @@ type SetupIO struct {
 	Probe func(root string) (files, dirs int, err error) // 检测本地目录（帮助填对路径）
 }
 
+// CredsIO — 网盘凭据（cookie）的查询与录入。
+//
+// 存在的理由：cookie 会过期，而它既不能进配置文件、也不该逼人重走向导 ——
+// 看板上就地换一条是最短路径。Status 只报"来源/有没有"，**绝不回传凭据内容**。
+type CredsIO struct {
+	// Status 返回 {source: "env"|"file"|"none", path: "...", has: bool}
+	Status func() map[string]any
+	// Save 载荷 {"cookie"|"bduss"+"stoken": "...", "remember": bool}
+	// 返回 {message, applied, need_restart}；凭据本身永不进返回值。
+	Save func(payload map[string]any) (map[string]any, error)
+}
+
 // Server — 看板 HTTP 服务。
 type Server struct {
 	hub    *Hub
@@ -152,6 +164,7 @@ type Server struct {
 	ctrl   Control
 	cfgIO  ConfigIO
 	setup  *SetupIO
+	creds  *CredsIO
 	srv    *http.Server
 	addr   string
 }
@@ -163,6 +176,12 @@ func New(addr string, hub *Hub, status StatusFunc, ctrl Control, cfgIO ConfigIO)
 // WithSetup — 挂载首次配置向导（daemon 不需要）。
 func (s *Server) WithSetup(io SetupIO) *Server {
 	s.setup = &io
+	return s
+}
+
+// WithCreds — 挂载凭据管理（看板需要；cookie 过期时就地换）。
+func (s *Server) WithCreds(io CredsIO) *Server {
+	s.creds = &io
 	return s
 }
 
@@ -178,6 +197,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/setup", s.withLocal(s.handleSetup))
 	mux.HandleFunc("/api/setup/apply", s.withLocal(s.handleSetupApply))
 	mux.HandleFunc("/api/setup/probe", s.withLocal(s.handleSetupProbe))
+	mux.HandleFunc("/api/credentials", s.withLocal(s.handleCreds))
 
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
@@ -404,6 +424,51 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hub.Append("[看板] " + msg)
 	writeJSON(w, map[string]any{"ok": true, "message": msg})
+}
+
+// handleCreds — 凭据查询（GET）与录入/更新（POST）。
+//
+// 回环 + 同源校验由 withLocal 兜底；返回值里永远不含 BDUSS/STOKEN 本身，
+// 连"前几位"都不回显 —— 看板只需要知道"有没有、从哪来"。
+func (s *Server) handleCreds(w http.ResponseWriter, r *http.Request) {
+	if s.creds == nil {
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{
+			"ok": false, "error": "当前模式不支持凭据管理",
+		})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		st := s.creds.Status()
+		if st == nil {
+			st = map[string]any{}
+		}
+		st["ok"] = true
+		writeJSON(w, st)
+	case http.MethodPost:
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		out, err := s.creds.Save(payload)
+		if err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+				"ok": false, "error": err.Error(),
+			})
+			return
+		}
+		if out == nil {
+			out = map[string]any{}
+		}
+		out["ok"] = true
+		if msg, _ := out["message"].(string); msg != "" {
+			s.hub.Append("[看板] " + msg)
+		}
+		writeJSON(w, out)
+	default:
+		http.Error(w, "GET/POST only", http.StatusMethodNotAllowed)
+	}
 }
 
 func writeJSONStatus(w http.ResponseWriter, code int, v any) {

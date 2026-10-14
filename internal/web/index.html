@@ -209,7 +209,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
     <button class="nav-btn" data-page="config"><span class="ic">⚙</span>配置</button>
     <button class="nav-btn" data-page="logs"><span class="ic">▤</span>日志</button>
     <div class="foot">
-      仅监听 127.0.0.1<br>凭据只从环境变量读取<br><span id="ver">bdsync</span>
+      仅监听 127.0.0.1<br>凭据存二进制同目录 credentials.dat<br><span id="ver">bdsync</span>
     </div>
   </nav>
 
@@ -258,7 +258,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
         </div>
         <label class="conn" style="margin-top:14px; cursor:pointer">
           <input type="checkbox" id="s-remember" checked>
-          <span>记住凭据（用 Windows DPAPI 按当前用户加密，存到 %APPDATA%\bdsync，不进任何配置文件；不勾则只对本次进程有效）</span>
+          <span>记住凭据（明文存到二进制同目录 credentials.dat，方便换机/搬目录直接用；不进任何配置文件。不勾则只对本次进程有效）</span>
         </label>
       </div>
 
@@ -306,6 +306,8 @@ body.setup-mode #page-setup { padding-top: 12px; }
             <div class="metric"><span class="k">运行时长</span><span class="v" id="m-uptime" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">内存 RSS</span><span class="v" id="m-rss" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">存活堆</span><span class="v" id="m-heap" style="font-size:16px">—</span></div>
+            <div class="metric" style="grid-column:1/-1"><span class="k">网盘凭据</span>
+              <div style="font-size:13.5px; font-weight:550" id="m-creds">—</div></div>
           </div>
         </div>
         <div class="card">
@@ -379,6 +381,37 @@ body.setup-mode #page-setup { padding-top: 12px; }
           <button class="btn" id="btn-hideyaml">收起</button>
         </div>
       </div>
+      <div class="card">
+        <h2>网盘凭据</h2>
+        <div class="metric" style="gap:6px; margin-bottom:14px">
+          <div><span class="k">当前来源</span>
+            <div style="font-size:14px; font-weight:550" id="k-source">—</div></div>
+          <div><span class="k">存储位置</span>
+            <div style="font-size:13px; word-break:break-all" id="k-path">—</div></div>
+        </div>
+        <div class="form">
+          <div class="field" style="grid-column:1/-1">
+            <label>新的 Cookie（整行粘贴，含 <code>BDUSS=</code> 与 <code>STOKEN=</code>）</label>
+            <input id="k-cookie" autocomplete="off" spellcheck="false"
+                   placeholder="BDUSS=xxx; STOKEN=yyy  —— 留空则不修改">
+          </div>
+        </div>
+        <label class="conn" style="margin-top:10px; cursor:pointer">
+          <input type="checkbox" id="k-remember" checked>
+          <span>保存到二进制同目录 <code>credentials.dat</code>（明文文件，不进配置文件）</span>
+        </label>
+        <div class="btnrow" style="margin-top:14px">
+          <button class="btn accent" id="btn-creds">更新凭据</button>
+          <button class="btn" id="btn-creds-clear">清除已保存凭据</button>
+        </div>
+        <div class="chips" id="creds-chips"></div>
+        <div class="hintline">
+          cookie 会过期（表现为网盘报 <code>-6 请重新登录</code> 或 <code>31030</code>）。
+          这里贴一条新的 → 保存 → 备份运行时自动重启换上，**不用重走向导、不用改配置文件**。<br>
+          怎么拿：浏览器登录 pan.baidu.com → F12 →「网络」→ 刷新 → 点开任意请求 →「请求头」→
+          复制 <code>cookie</code> 整行粘进来。
+        </div>
+      </div>
     </section>
 
     <!-- 日志 -->
@@ -401,6 +434,14 @@ body.setup-mode #page-setup { padding-top: 12px; }
 "use strict";
 const $ = id => document.getElementById(id);
 let logSeq = -1, paused = false, stopping = false, lastStatusAt = 0, es = null;
+
+/* 凭据来源的展示文案（顶部声明：renderStatus 与凭据卡片都会用，避免 TDZ 顺序问题） */
+const CRED_SRC = {
+  env:     ["环境变量 BDSYNC_COOKIE", "ok"],
+  file:    ["本地文件 credentials.dat", "ok"],
+  session: ["仅本次进程（未保存）", "warn"],
+  none:    ["未设置 —— 备份无法运行", "err"],
+};
 
 /* ── 路由（hash）：页面归属的唯一真相 ──
    之前用"点按钮就 toggle class"，导致多页可能同时 active（轮询一冲就重演）。
@@ -425,7 +466,7 @@ function renderRoute(page) {
     p.classList.toggle("active", p.id === "page-" + page));
   currentRoute = page;
   document.title = "bdsync · " + ROUTES[page];
-  if (page === "config") loadConfig();
+  if (page === "config") { loadConfig(); loadCreds(); }
 }
 function goRoute(page, replace) {
   const key = ROUTES[page] ? page : "overview";
@@ -481,9 +522,13 @@ function renderStatus(s) {
   $("ctl-title").textContent = state;
   $("st-hint").textContent = s.paused
     ? "检测与排空已暂停 —— 队列保持不变"
-    : s.stopped ? "进程已停止" :
+    : s.stopped ? (s.error ? "启动失败：" + s.error : "进程已停止") :
       (s.active ? "有变更正在处理，处于 NORMAL 优先级 + CPU 80% 上限" : "IDLE 优先级 + CPU 上限 " + (s.quiet_cap ?? 5) + "%，几乎不消耗资源");
   $("ctl-hint").textContent = s.paused ? "恢复后将在下个检测周期继续" : (s.active ? "正在进行上传或扫描" : "保持静默，按周期检测");
+  if (s.error && s.stopped) {
+    $("ctl-hint").innerHTML = "<b style='color:var(--danger)'>" + escapeHtml(s.error) + "</b>" +
+      " —— cookie 过期时去「配置 → 网盘凭据」贴一条新的即可。";
+  }
 
   $("m-pend").textContent = fmtBytes(s.pending?.bytes);
   $("m-pend2").textContent = (s.pending?.count ?? 0) + " 个文件" + (s.pending?.deferred ? "（" + s.pending.deferred + " 推迟中）" : "");
@@ -499,6 +544,10 @@ function renderStatus(s) {
   $("m-heap").textContent = fmtBytes(s.heap_bytes);
   $("m-root").textContent = s.root ?? "—";
   $("m-remote").textContent = s.remote ?? "—";
+  {
+    const [label, cls] = CRED_SRC[s.creds] || ["—", "warn"];
+    $("m-creds").innerHTML = '<span class="chip ' + cls + '">' + escapeHtml(label) + "</span>";
+  }
   $("ver").textContent = (s.version ?? "bdsync") + " · schema " + (s.schema ?? "?");
 
   $("btn-pause").disabled = paused || stopped;
@@ -611,15 +660,19 @@ $("btn-saveyaml").onclick = () => {
 // 只有"向导 ↔ 控制台"发生切换时才动页面布局。
 // 早先无条件 showShell() 的写法会把用户正在看的页（配置/日志）冲掉，
 // 导致概览与当前页同时渲染 —— 状态没变就完全不碰 DOM。
+//
+// 判据用 st.initialized（配置文件里 service.initialized 标记）而不是 st.running：
+// 凭据过期时服务起不来是**运行时故障**，人该看到控制台 + 错误，然后用
+// 「配置 → 网盘凭据」就地补一条 cookie —— 而不是被踢回向导重填三项。
 let setupMode = null;
 async function loadSetup(force) {
   let st = null;
   try { st = await (await fetch("/api/setup")).json(); } catch (e) { return; }
-  const needSetup = !!(st && !st.running);
+  const needSetup = !!(st && !st.initialized && !st.running);
   if (!force && needSetup === setupMode) return;
   setupMode = needSetup;
   document.body.classList.toggle("setup-mode", needSetup);
-  if (!needSetup) { showShell(); return; }
+  if (!needSetup) { showShell(); loadCreds(); return; }
   // 向导模式：只留向导页（侧栏由 CSS 隐藏；路由让位）
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -684,9 +737,49 @@ $("btn-probe").onclick = async () => {
   } catch (e) { chips(["检测失败: " + e], "err", "", "setup-chips"); }
 };
 
+/* ── 网盘凭据（cookie 过期时就地换） ── */
+async function loadCreds() {
+  let d = null;
+  try { d = await (await fetch("/api/credentials")).json(); } catch (e) { return; }
+  if (!d || !d.ok) return;
+  const [label, cls] = CRED_SRC[d.source] || ["未知", "warn"];
+  $("k-source").innerHTML = '<span class="chip ' + cls + '">' + escapeHtml(label) + "</span>";
+  $("k-path").textContent = d.path || "（不保存）";
+}
+$("btn-creds").onclick = async () => {
+  const v = $("k-cookie").value.trim();
+  if (!v) { chips(["请先粘贴新的 Cookie"], "warn", "", "creds-chips"); return; }
+  const btn = $("btn-creds"); btn.disabled = true;
+  chips(["保存中…"], "ok", "", "creds-chips");
+  try {
+    const r = await (await fetch("/api/credentials", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({cookie: v, remember: $("k-remember").checked})
+    })).json();
+    if (!r.ok) { chips([r.error || "保存失败"], "err", "", "creds-chips"); return; }
+    $("k-cookie").value = "";
+    chips([r.message || "凭据已更新"], "ok", "", "creds-chips");
+    loadCreds(); fetchStatus(true);
+  } catch (e) { chips(["提交失败: " + e], "err", "", "creds-chips"); }
+  finally { btn.disabled = false; }
+};
+$("btn-creds-clear").onclick = async () => {
+  if (!confirm("清除本地保存的凭据（credentials.dat）？\n（环境变量来源不受影响；下次启动若无环境变量会要求重新录入）")) return;
+  try {
+    const r = await (await fetch("/api/credentials", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({clear: true})
+    })).json();
+    chips(r.ok ? [r.message || "已清除"] : [r.error || "清除失败"],
+          r.ok ? "ok" : "err", "", "creds-chips");
+    loadCreds();
+  } catch (e) { chips(["清除失败: " + e], "err", "", "creds-chips"); }
+};
+
 /* ── 启动 ── */
 loadSetup(true);                 // 强制判定一次：向导态 or 控制台
 loadConfig();
+loadCreds();
 fetchStatus(true);
 setInterval(() => fetchStatus(false), 3000); // 客户端侧 3s 兜底刷新
 setInterval(() => loadSetup(false), 4000);   // 状态变化时（配置成功）自动离开向导

@@ -169,7 +169,8 @@ func fillMemMetrics(res *detector.ScanResult) {
 func usage() {
 	fmt.Fprint(os.Stderr, `bdsync — 本地 → 百度网盘 单向备份
 
-  ★ 直接双击本 exe（不带任何参数）即可：自动打开看板，网页里填三项就能开始备份。
+  ★ 直接双击本 exe（不带任何参数）即可启动：控制台打印看板地址，**不自动开浏览器**，
+    自己在终端里按住 Ctrl 单击地址打开，网页里填三项就能开始备份。
 
 用法:
   bdsync scan     [--root <目录>] [--db ...] [--backend auto|usn|poll] [--exclude 规则] [--walk-only] [--json]
@@ -181,16 +182,26 @@ func usage() {
   bdsync meta     --remote /网盘/路径
   bdsync selftest [--db ...] [--backend auto|usn|poll]  （会向 root 写探测文件）
   bdsync validate --root <目录>
+  bdsync web      [--browser]   （双击入口；--browser 才自动开浏览器）
 
-配置（就地便携：exe + bdsync.yaml + index.db + logs/ 同一文件夹，可整体搬走）:
+服务化（nssm / 计划任务 / systemd）:
+  bdsync --service            或环境变量 BDSYNC_SERVICE=1
+    · 不弹浏览器、启动失败不等按键（否则进程会卡在 Scanln 上被服务管理器判超时）
+    · stdout 可重定向到文件；停止走 SIGINT/SIGTERM（nssm 的 CTRL_C/关闭窗口）
+    · 配置/凭据/索引一律按 exe 所在目录解析，与工作目录无关
+
+配置（就地便携：exe + bdsync.yaml + index.db + credentials.dat + logs/ 同一文件夹，可整体搬走）:
   --config bdsync.yaml   未指定时探测 <exe同目录>/bdsync.yaml → ./bdsync.yaml → …
   必填 pair（缺任一项拒绝启动，备份目标不许靠猜）:
     pair.local_root: "D:/YourData"    本地根目录（严格只读）
     pair.remote:     "/bdsync-backup"     网盘内路径（/ 开头）
   service.db_path 默认 index.db（与二进制同目录）；log_file 默认 logs/bdsync.log
   相对路径一律以配置文件所在目录为基准解析；从任何目录调用结果一致
-  凭据（BDUSS/STOKEN）只从环境变量读取，绝不进配置文件:
-  set BDSYNC_COOKIE="BDUSS=xxx; STOKEN=yyy"     （或 BDSYNC_BDUSS / BDSYNC_STOKEN）
+
+凭据（BDUSS/STOKEN）绝不进配置文件，两个来源（优先级从高到低）:
+  1) 环境变量  set BDSYNC_COOKIE="BDUSS=xxx; STOKEN=yyy"   （或 BDSYNC_BDUSS / BDSYNC_STOKEN）
+  2) 二进制同目录 credentials.dat —— 明文文件，看板里勾「记住凭据」生成
+     cookie 过期时不必重走向导：看板「配置 → 网盘凭据」贴一条新的即可，保存后自动重启运行时
 
 后端:
   usn   Windows 本地 NTFS：读 USN Journal，空闲零文件打开/零磁盘唤醒（design §4.2）
@@ -200,28 +211,34 @@ func usage() {
 }
 
 func main() {
-	// 零门槛入口：**直接双击 exe**（不带任何参数）= 启动看板 + 向导
-	if len(os.Args) < 2 {
+	// --service 不是任何子命令的 flag：先剥掉，它只影响 serviceMode（见 creds_api.go）
+	args := os.Args
+	if hasFlag(args[1:], "--service") || hasFlag(args[1:], "-service") {
+		args = append([]string{args[0]}, stripServiceArgs(args[1:])...)
+	}
+
+	// 零门槛入口：**直接双击 exe**（不带子命令）= 启动看板 + 向导
+	if len(args) < 2 {
 		if err := loadConfigFromArgs(nil); err != nil {
 			fmt.Fprintln(os.Stderr, "✗ 配置读取失败:", err)
-			fmt.Println("  按任意键关闭窗口…")
-			fmt.Scanln()
+			pauseBeforeExit()
 			os.Exit(1)
 		}
 		runWebEntry(nil)
 		return
 	}
-	if os.Args[1] == "help" || os.Args[1] == "-h" || os.Args[1] == "--help" {
+	if args[1] == "help" || args[1] == "-h" || args[1] == "--help" {
 		usage()
 		return
 	}
-	if err := loadConfigFromArgs(os.Args[2:]); err != nil {
+	if err := loadConfigFromArgs(args[2:]); err != nil {
 		fmt.Fprintln(os.Stderr, "✗", err)
+		pauseBeforeExit()
 		os.Exit(2)
 	}
-	cmdArgs := stripConfigArgs(os.Args[2:])
+	cmdArgs := stripConfigArgs(args[2:])
 	var err error
-	switch os.Args[1] {
+	switch args[1] {
 	case "scan":
 		err = cmdScan(cmdArgs)
 	case "send":
@@ -251,8 +268,19 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		pauseBeforeExit()
 		os.Exit(1)
 	}
+}
+
+// hasFlag — 参数里是否含指定 flag（用于服务模式识别与剥离）。
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 func cmdScan(args []string) error {
@@ -285,7 +313,7 @@ func cmdScan(args []string) error {
 	}
 	rootAbs = filepath.Clean(rootAbs)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer stop()
 
 	var st *index.Store
@@ -516,11 +544,21 @@ type statusJSON struct {
 }
 
 // loadCookie — BDUSS/STOKEN 只从环境变量读取，绝不落盘（design 安全约束）。
-// memCookie — 运行期由网页向导注入的凭据（仅内存，不落盘）。
-var memCookie atomic.Value // string
+// memCookie / memCookieSrc — 运行期由网页向导或「凭据」卡片注入的凭据（仅内存，不落盘）
+// 及其来源。来源必须跟着值一起记：只看"memCookie 有没有值"会把冷启动从
+// credentials.dat 读回来的凭据误报成"仅本次进程（未保存）"—— 与事实相反。
+var (
+	memCookie    atomic.Value // string
+	memCookieSrc atomic.Value // string: "session" | "file"
+)
 
-// setCookieForRun — 供网页向导把用户刚输入的凭据交给运行时。
-func setCookieForRun(c string) { memCookie.Store(c) }
+// setCookieForRun — 供网页把用户刚输入的凭据交给运行时（来源=本次录入）。
+func setCookieForRun(c string) { setCookieForRunFrom(c, "session") }
+
+func setCookieForRunFrom(c, src string) {
+	memCookie.Store(c)
+	memCookieSrc.Store(src)
+}
 
 func loadCookie() (string, error) {
 	if c := os.Getenv("BDSYNC_COOKIE"); c != "" {
@@ -538,14 +576,11 @@ func loadCookie() (string, error) {
 	if c, _ := memCookie.Load().(string); c != "" {
 		return c, nil
 	}
-	// 网页向导"记住凭据"：DPAPI 加密文件（当前 Windows 用户才能解）
-	if c := loadCredentialsDPAPI(); c != "" {
+	// 网页向导"记住凭据"：二进制同目录 credentials.dat（明文）
+	if c := loadCredentials(); c != "" {
 		return c, nil
 	}
-	return "", errors.New("缺少网盘凭据。三种方式任选其一：\n" +
-		"  1) 网页向导里填写（推荐：双击 bdsync.cmd → 浏览器里填）\n" +
-		"  2) 环境变量 BDSYNC_COOKIE=\"BDUSS=xxx; STOKEN=yyy\"\n" +
-		"  3) 网页向导勾选『记住凭据』（DPAPI 加密存到 %APPDATA%\\bdsync，不进任何配置文件）")
+	return requireCookie()
 }
 
 func cmdSend(args []string) error {
@@ -562,7 +597,7 @@ func cmdSend(args []string) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer stop()
 
 	// 配置驱动：本地根目录与远端目录都来自 pair（--remote 仅为显式覆盖）
@@ -675,7 +710,7 @@ func cmdCheck(args []string) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer stop()
 
 	st, _, remoteRoot, err := openConfiguredStore(ctx, *dbPath)
@@ -807,7 +842,7 @@ func cmdReconcile(args []string) error {
 		return errors.New("镜像模式未开启（mirror.enabled），无对账/清理可做")
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), stopSignals()...)
 	defer stop()
 
 	st, localRoot, remoteRoot, err := openConfiguredStore(ctx, *dbPath)

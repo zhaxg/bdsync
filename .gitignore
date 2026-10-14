@@ -10,10 +10,12 @@
 logs/
 *.log
 
-# 运行时配置（含本机绝对路径，不入库）
+# 运行时配置与凭据（含本机绝对路径 / 加密凭据，不入库）
 # 格式样例见 internal/config/bdsync.example.yaml
 bdsync.yaml
 bdsync.yaml.bak
+credentials.dat
+*.dat
 
 # 编辑器与工具缓存
 .playwright-mcp/

@@ -7,7 +7,10 @@
 # 路径约定：db_path / log_file / pair.local_root 的相对值一律以
 #           **本文件所在目录**为基准解析 → 整个文件夹可整体搬走，从任何目录调用都一致。
 #
-# ⚠ 凭据不进配置文件：BDUSS/STOKEN 只从环境变量读取（BDSYNC_COOKIE）。
+# ⚠ 凭据不进配置文件：BDUSS/STOKEN 有两个来源（优先级从高到低）：
+#   1) 环境变量 BDSYNC_COOKIE
+#   2) 二进制同目录 credentials.dat（明文文件；看板「网盘凭据」页写入）
+#   cookie 过期时在看板里换一条即可，不必改本文件、也不必重走向导。
 
 # ── 备份对（必填，缺任一项 bdsync 拒绝启动）────────────────────
 # 备份目标必须是显式声明的事实：bdsync 不猜、不兜底、不从命令行临时绑定。
@@ -59,10 +62,23 @@ service:
   log_file: "logs/bdsync.log"      # 相对本文件目录 → <exe 同目录>/logs/；空 = 只打 stdout
   log_max_mb: 10                   # 单文件上限，超过轮转
   log_keep: 7                      # 保留份数（10MB × 7 ≈ 70MB 上限）
+  initialized: true                # 首次配置完成标记（向导自动写入）
+                                   #   true  → 双击直接进服务态，不再显示首次配置向导
+                                   #   false → 每次启动都进向导（删掉本文件等价于重来）
 
 # 部署形态（就地便携）：
 #   <任意目录>/bdsync/
 #     ├─ bdsync.exe
 #     ├─ bdsync.yaml      ← 本文件，pair 在这里声明
 #     ├─ index.db         ← 索引库（与二进制同目录）
+#     ├─ credentials.dat  ← 凭据（明文，与二进制同目录；已进 .gitignore，勿外传）
 #     └─ logs/bdsync.log  ← 日志与轮转
+#
+# 作为 Windows 服务（nssm）运行：
+#   nssm install bdsync <全路径>\bdsync.exe
+#     AppParameters : --service
+#     AppDirectory  : <exe 所在目录>（其实不依赖 CWD，写上更直观）
+#     AppEnvironment: BDSYNC_SERVICE=1   （与 --service 二选一即可）
+#     AppStdout/AppStderr: logs\nssm.log （可选）
+#   停止走 CTRL_C / 关闭事件 → SIGINT/SIGTERM，进程会关库、关日志后退出。
+#   服务模式下不弹浏览器、启动失败也不等按键（否则会被服务管理器判超时强杀）。

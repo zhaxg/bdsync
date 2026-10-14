@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -232,10 +231,12 @@ func cmdDaemon(args []string) error {
 
 	ctx, cancelAll := context.WithCancel(context.Background())
 	defer cancelAll()
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, stopSignals()...)
 	defer stop()
 
-	fmt.Printf("看板地址: %s\n", webAddrHint(eff))
+	if eff.Web.Enabled {
+		fmt.Printf("服务已启动到 %s （按住 Ctrl 单击即可用浏览器打开）\n", webAddrHint(eff))
+	}
 	return runService(ctx, stop, eff, serviceOpts{AppID: *appID})
 }
 
@@ -380,7 +381,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 			Save: func(payload map[string]any) ([]string, []string, error) {
 				return configSave(rt, payload)
 			},
-		})
+		}).WithCreds(daemonCreds())
 		if err := webSrv.Start(); err != nil {
 			return err
 		}
@@ -652,6 +653,7 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 			"paused":     snap.paused,
 			"stopped":    rt.stopping.Load(),
 			"active":     snap.active,
+			"creds":      credsSource(),
 			"quiet_cap":  snap.cfg.Quota.QuietCPUCap,
 			"uptime_sec": time.Since(rt.startedAt).Seconds(),
 			"rss_bytes":  rss,
@@ -660,6 +662,48 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 			"last_scan":  lastScan,
 			"last_drain": lastDrain,
 		}
+	}
+}
+
+// daemonCreds — `bdsync daemon`（独立看板）用的凭据接口。
+//
+// 与 webcmd 里 setupState 的实现差别只在"保存之后怎么办"：daemon 的运行时是
+// 主循环本身，进程内没有安全的重启入口，所以落盘后如实告诉人"重启服务生效"。
+// （cookie 在 runService 起点被固化进 baidu.Client，见 restartService 的注释。）
+func daemonCreds() web.CredsIO {
+	return web.CredsIO{
+		Status: func() map[string]any { return credsStatusPublic() },
+		Save: func(payload map[string]any) (map[string]any, error) {
+			if clear, _ := payload["clear"].(bool); clear {
+				deleteCredentials()
+				return map[string]any{"message": "已清除二进制同目录的 credentials.dat"}, nil
+			}
+			cookie, warn, empty, err := cookieFromPayload(payload)
+			if err != nil {
+				return nil, err
+			}
+			if empty {
+				return nil, errors.New("请粘贴新的 Cookie（或分别填 BDUSS / STOKEN）")
+			}
+			remember := true
+			if v, ok := payload["remember"].(bool); ok {
+				remember = v
+			}
+			if err := saveCookieToDisk(cookie, remember); err != nil {
+				return nil, err
+			}
+			msg := "凭据已保存"
+			if !remember {
+				msg += "（仅本次进程有效，未持久化）"
+			}
+			if warn != "" {
+				msg += "；提醒：" + warn
+			}
+			return map[string]any{
+				"message":   msg + "。重启 bdsync 服务后生效。",
+				"restarted": false,
+			}, nil
+		},
 	}
 }
 
@@ -767,7 +811,11 @@ func structuralChanges(cur, next *config.Config) []string {
 	if cur.Detector.Mode != next.Detector.Mode {
 		out = append(out, "detector.mode")
 	}
-	if cur.Service != next.Service {
+	// initialized 是"是否初始化过"的标记，变了不代表运行时结构变化，不提示重启
+	if cur.Service.DBPath != next.Service.DBPath ||
+		cur.Service.LogFile != next.Service.LogFile ||
+		cur.Service.LogMaxMB != next.Service.LogMaxMB ||
+		cur.Service.LogKeep != next.Service.LogKeep {
 		out = append(out, "service.*（db_path / 日志路径与轮转）")
 	}
 	if cur.Web != next.Web {
@@ -813,7 +861,8 @@ func writeConfigFile(path string, cfg *config.Config) error {
 		return err
 	}
 	header := "# bdsync 配置（由看板保存；格式见 internal/config/bdsync.example.yaml）\n" +
-		"# 凭据不进本文件：BDUSS/STOKEN 只从环境变量 BDSYNC_COOKIE 读取\n"
+		"# 凭据不进本文件：BDUSS/STOKEN 存二进制同目录 credentials.dat（明文），\n" +
+		"#   或环境变量 BDSYNC_COOKIE\n"
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append([]byte(header), b...), 0o644); err != nil {
 		return err
