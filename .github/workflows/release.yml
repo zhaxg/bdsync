@@ -71,16 +71,19 @@ jobs:
           esac
           curl -fsSL -o upx-dl "https://github.com/upx/upx/releases/download/v${UPX_VER}/${ASSET}"
           mkdir -p upx
-          # Windows 资产解出 upx.exe，Linux 资产解出 upx —— 名字不同，
-          # 所以显式列出两种候选，别指望 find -name upx 能同时命中。
           if [[ "$ASSET" == *.zip ]]; then
             unzip -q -o upx-dl -d upx
-            UPDBIN="upx/upx.exe"
           else
             tar -xJf upx-dl -C upx --strip-components=1
-            UPDBIN="upx/upx"
           fi
-          test -x "$UPDBIN" || { echo "::error::找不到可执行的 upx（试过 $UPDBIN）"; ls -R upx; exit 1; }
+          # 两种资产的目录结构/文件名都不同：
+          #   win64.zip   → upx/upx-5.2.1-win64/upx.exe
+          #   linux.tar.xz → upx/upx
+          # 所以按名字通配找，不写死路径（写死过一次，Linux 侧先过了、Windows 侧因
+          # zip 多一层目录而找不到）。
+          UPDBIN="$(find upx -type f \( -name upx -o -name upx.exe \) | head -n1)"
+          [ -n "$UPDBIN" ] || { echo "::error::解包里没有 upx 可执行文件"; find upx -type f; exit 1; }
+          chmod +x "$UPDBIN"
           echo "UPX_BIN=$UPDBIN" >> "$GITHUB_ENV"
           "$UPDBIN" --version | head -n1
 
