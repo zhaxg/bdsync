@@ -180,7 +180,7 @@ func TestConsoleTransformer_不做字符替换(t *testing.T) {
 	}
 
 	// GBK 装不下的：退化成 '?'，但不能把后续输出一起吞掉
-	enc, err := encodeForTest(t, 936, "前" + string(rune(0x1F389)) + "后")
+	enc, err := encodeForTest(t, 936, "前"+string(rune(0x1F389))+"后")
 	if err != nil {
 		t.Fatalf("含装不下字符时应仍能编码（退化为 '?'）: %v", err)
 	}

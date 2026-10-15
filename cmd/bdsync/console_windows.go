@@ -60,31 +60,43 @@ var (
 // transcodeConsole -- 把 f 换成「写入即转码」的等价物。
 //
 // os.Stdout 是 *os.File，没法在外面包一层自定义 Write；唯一的办法是接一根
-// os.Pipe 再由后台协程转码，于是 os.Stdout 变成管道的读端：
+// os.Pipe 再由后台协程转码，于是 os.Stdout 变成**管道的写端**：
 //
-//	fmt.Printf → 管道 → 协程 transform → 真实控制台
+//	fmt.Printf --> 管道写端 --> 协程 transform --> 真实控制台
 //
 // 好处是几百处 fmt.Printf / fmt.Fprintf(os.Stderr, ...) 一行都不用改。
 // 代价：**退出前必须让转码协程收尾**，否则最后几行（通常正是错误信息）会随进程一起消失。
 // 收尾点有两个，见 flushConsole 与 exitProcess。
+//
+// 注意：返回的必须是 w（写端），不是 r。之前这里 return r，于是 os.Stdout
+// 变成了读端 —— fmt 往读端写必然失败，而 fmt 丢弃 Write 的错误，
+// 表现就是「进程正常跑、控制台一个字都没有」，且日志文件一切正常。
 func transcodeConsole(f *os.File) *os.File {
 	t := consoleTransformer(f)
 	if t == nil {
 		return f // 非控制台 / 控制台已是 UTF-8 → 原样直通
 	}
+	return installTranscoder(f, t)
+}
+
+// installTranscoder -- 建管道、起转码协程，返回**写端**给调用方当新的 stdout/stderr。
+//
+// 从 transcodeConsole 里拆出来是为了能脱离真实控制台做单测：go test 的 stdout
+// 是管道，isConsole() 为 false，根本进不了这条分支。
+func installTranscoder(dst *os.File, t transform.Transformer) *os.File {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return f // 建不出管道就退回直通：宁可乱码，也别把输出全吞了
+		return dst // 建不出管道就退回直通：宁可乱码，也别把输出全吞了
 	}
 	done := make(chan struct{})
 
 	pipeMu.Lock()
-	pipeWriters = append(pipeWriters, w)
+	pipeWriters = append(pipeWriters, w) // 只用来收尾时关闭，触发读端 EOF
 	pipeDones = append(pipeDones, done)
 	pipeMu.Unlock()
 
-	go pumpConsole(f, r, t, done)
-	return r
+	go pumpConsole(dst, r, t, done)
+	return w // 写端：调用方（os.Stdout / os.Stderr）要往这里写
 }
 
 // pumpConsole -- 转码协程本体：读到管道 EOF 为止，把数据全部落到真实控制台。
@@ -134,16 +146,25 @@ func consoleTransformer(f *os.File) transform.Transformer {
 
 // newConsoleTransformer -- 给定控制台输出代码页造转码器。cp 不是 UTF-8 时返回 nil。
 // 单独拎出来是为了能脱离控制台做单测。
+//
+// 警告：不要写成 transform.Chain(单元素) —— 那样**输出恒为空**，控制台一片空白。
+//
+// 原因（golang.org/x/text v0.22.0 transform.go）：
+//
+//	c := &chain{link: make([]link, len(t)+1)}   // 传 1 个 → link 长度 2
+//	for low, i, high := ..., ..., len(c.link)-2  // → high = 0
+//	    ; low <= i && i <= high; {                // 循环条件恒为 false
+//
+// 循环一次都不跑，没有任何字节被写进 dst。所以必须**直接返回**编码器，
+// 不经过 Chain —— Chain 只在需要串接两层以上时才用。
 func newConsoleTransformer(cp uintptr) transform.Transformer {
 	enc := consoleEncoding(cp)
 	if enc == nil {
 		return nil // 65001：控制台本来就是 UTF-8，不动它
 	}
-	return transform.Chain(
-		// 只保留最后一道保险：装不下的 rune 退化成 '?'，
-		// 避免 transform.Reader 出错后整条 stdout 从此哑掉。
-		encoding.ReplaceUnsupported(enc.NewEncoder()),
-	)
+	// 只保留最后一道保险：装不下的 rune 退化成 '?'，
+	// 避免 transform.Reader 出错后整条 stdout 从此哑掉。
+	return encoding.ReplaceUnsupported(enc.NewEncoder())
 }
 
 // consoleEncoding -- 控制台输出代码页 → 编码器。nil = 无需转码。

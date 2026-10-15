@@ -781,7 +781,7 @@ func (s *setupState) credsSave(payload map[string]any) (map[string]any, error) {
 	if clear, _ := payload["clear"].(bool); clear {
 		deleteCredentials()
 		return map[string]any{
-			"message": "已清除二进制同目录的 credentials.dat",
+			"message":   "已清除二进制同目录的 credentials.dat",
 			"restarted": false,
 		}, nil
 	}
@@ -829,7 +829,7 @@ func (s *setupState) credsSave(payload map[string]any) (map[string]any, error) {
 	if running {
 		if err := s.restartService(); err != nil {
 			return map[string]any{
-				"message": msg + "；但重启失败：" + err.Error(),
+				"message":   msg + "；但重启失败：" + err.Error(),
 				"restarted": false,
 			}, nil
 		}

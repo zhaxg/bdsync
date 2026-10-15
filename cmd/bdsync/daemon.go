@@ -80,9 +80,9 @@ type runtimeState struct {
 	// 降级后不再变，日志/看板会一直显示 "usn" ---- 排障时会指向错误的后端。
 	degraded  atomic.Bool
 	schemaVer int
-	startedAt  time.Time
-	quietCap   int
-	stopping   atomic.Bool
+	startedAt time.Time
+	quietCap  int
+	stopping  atomic.Bool
 }
 
 type rtSnapshot struct {
@@ -594,7 +594,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					rt.setActive(false)
 					power.SetQuiet()
 					power.TrimMemory() // 进入 QUIET 才修剪（design §4.4）
-					quietSince = now // 心跳计时从这一刻起算
+					quietSince = now   // 心跳计时从这一刻起算
 					lastBeat = now
 					logf("[状态] → QUIET（空闲；CPU 上限 %d%%，IDLE 优先级）", cfg.Quota.QuietCPUCap)
 				}
