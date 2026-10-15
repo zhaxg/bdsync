@@ -221,7 +221,7 @@ func runWebEntry(args []string) {
 		// 双击场景：停下来让人读到错误（服务模式下绝不等按键，见 creds_api.go）
 		fmt.Println()
 		pauseBeforeExit()
-		exitProcess(1) // 不用 os.Exit：转码管道要收尾（console_windows.go）
+		os.Exit(1)
 	}
 }
 

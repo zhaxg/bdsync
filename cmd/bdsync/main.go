@@ -211,11 +211,6 @@ func usage() {
 }
 
 func main() {
-	// stdout/stderr 可能被换成了「写入即转码」的管道（见 console_windows.go）。
-	// 正常 return 的路径（help 等）必须收尾，否则最后几行会随进程一起消失；
-	// os.Exit 的路径不跑 defer，由 exitProcess 代劳。
-	defer flushConsole()
-
 	// --service 不是任何子命令的 flag：先剥掉，它只影响 serviceMode（见 creds_api.go）
 	args := os.Args
 	if hasFlag(args[1:], "--service") || hasFlag(args[1:], "-service") {
@@ -227,7 +222,7 @@ func main() {
 		if err := loadConfigFromArgs(nil); err != nil {
 			fmt.Fprintln(os.Stderr, "[X] 配置读取失败:", err)
 			pauseBeforeExit()
-			exitProcess(1) // 不用 os.Exit：转码管道要收尾（console_windows.go）
+			os.Exit(1)
 		}
 		runWebEntry(nil)
 		return
@@ -239,7 +234,7 @@ func main() {
 	if err := loadConfigFromArgs(args[2:]); err != nil {
 		fmt.Fprintln(os.Stderr, "[X]", err)
 		pauseBeforeExit()
-		exitProcess(2)
+		os.Exit(2)
 	}
 	cmdArgs := stripConfigArgs(args[2:])
 	var err error
@@ -269,12 +264,12 @@ func main() {
 		return
 	default:
 		usage()
-		exitProcess(2)
+		os.Exit(2)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		pauseBeforeExit()
-		exitProcess(1)
+		os.Exit(1)
 	}
 }
 
