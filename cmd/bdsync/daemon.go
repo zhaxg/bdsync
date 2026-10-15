@@ -26,7 +26,17 @@ import (
 	"bdsync/web"
 )
 
-const version = "v0.6-web"
+// version — 运行时版本号。
+//
+// 优先取构建期注入的 -ldflags "-X main.version=..."（CI 按 git tag 注入，
+// 见 .github/workflows/release.yml）；开发态没注入时退回下面的默认值，
+// 保证 `go build` / `go run` 不带任何 flag 也能跑。
+//
+// 用 var 而非 const：const 无法被链接器覆写（-X 只对 string 类型的 var 生效）。
+var version = defaultVersion
+
+// defaultVersion — 未注入时的兜底版本号（开发态）。
+const defaultVersion = "v0.6-web"
 
 // quietHeartbeat — 静默期心跳间隔。
 //
@@ -35,8 +45,11 @@ const version = "v0.6-web"
 // 「安静地活着」和「卡死/被杀」——两者长得一模一样。
 //
 // 折中：**只在 QUIET/暂停时打**，有活干时一行都不多打，保住 P2 的低噪声目标；
-// 一旦进入静默，就每 30 分钟留一个活体证据。
-const quietHeartbeat = 30 * time.Minute
+// 一旦进入静默，就每 quietHeartbeat 留一个活体证据。
+//
+// 30 分钟对观察者太长（要等半小时才能确认一次）。改成 10 分钟：一天 144 行、
+// 约 15KB，相对 10MB 轮转上限可忽略，仍远低于"刷屏"。
+const quietHeartbeat = 10 * time.Minute
 
 // activity — 上次扫描/排空的摘要（看板展示）。
 type activity struct {
@@ -62,7 +75,11 @@ type runtimeState struct {
 	localRoot  string
 	remoteRoot string
 	backend    string
-	schemaVer  int
+	// degraded — usn 打不开/失效后已降级 poll（design 硬规矩①）。
+	// 存在 runtimeState 里而非只当循环局部变量：rt.backend 是启动时的快照，
+	// 降级后不再变，日志/看板会一直显示 "usn" —— 排障时会指向错误的后端。
+	degraded  atomic.Bool
+	schemaVer int
 	startedAt  time.Time
 	quietCap   int
 	stopping   atomic.Bool
@@ -74,8 +91,21 @@ type rtSnapshot struct {
 	exclude   []string
 	paused    bool
 	active    bool
+	degraded  bool
 	lastScan  *activity
 	lastDrain *activity
+}
+
+// backendName — 展示用后端名。降级后必须显示 poll，否则日志/看板会把
+// 故障指向一个实际没在跑的后端（design §4.9：usn 失效 → 降级 poll）。
+func (r *runtimeState) backendName() string {
+	if r.backend != "usn" {
+		return r.backend
+	}
+	if r.degraded.Load() {
+		return "poll（usn 已降级）"
+	}
+	return "usn"
 }
 
 func (r *runtimeState) snap() rtSnapshot {
@@ -84,6 +114,7 @@ func (r *runtimeState) snap() rtSnapshot {
 	return rtSnapshot{
 		cfg: r.cfg, poll: r.poll, exclude: r.exclude,
 		paused: r.paused, active: r.active,
+		degraded: r.degraded.Load(),
 		lastScan: r.lastScan, lastDrain: r.lastDrain,
 	}
 }
@@ -486,7 +517,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					}
 					logf("[心跳] %s%s：静默 %s · 队列 %d 项（%s）· RSS %s · 后端 %s · 已运行 %s",
 						state, suffix, elapsed,
-						pend.Count+pend.History, humanBytes(pend.Bytes), mem, rt.backend, uptime)
+						pend.Count+pend.History, humanBytes(pend.Bytes), mem, rt.backendName(), uptime)
 				}
 			}
 
@@ -522,6 +553,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					case err != nil:
 						logf("[!] usn 后端失效，降级 poll（本进程内不再尝试 usn）: %v", err)
 						degraded = true
+						rt.degraded.Store(true) // 同步给 runtimeState，否则日志/看板仍显示 usn
 					case needFull:
 						logf("[!] usn 游标失效/journal 重建（正常路径）→ 全量扫描")
 						changed = runFullScan(ctx, rt, localRoot, "游标失效")
@@ -696,7 +728,7 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 		return map[string]any{
 			"version":    version,
 			"schema":     rt.schemaVer,
-			"backend":    rt.backend,
+			"backend":    rt.backendName(),
 			"root":       rt.localRoot,
 			"remote":     rt.remoteRoot,
 			"db_path":    snap.cfg.Service.DBPath,

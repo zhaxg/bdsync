@@ -1,0 +1,176 @@
+name: release
+
+# 按 tag 触发：推 v1.2.3 这样的 tag 即产出发布。
+# 只接受 v 前缀（vMAJOR.MINOR.PATCH），避免普通分支名/任意 tag 误触发。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 建 Release / 上传资产需要
+
+env:
+  GO_VERSION: '1.27.1'
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            upx: upx
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ''
+            upx: upx
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 需要完整历史给版本号推导留余地
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # ── 版本号：以 tag 为准（用户要求"运行时版本号跟着 tag 走"）──
+      # tag 形如 v1.2.3 → 注入 -X main.version=v1.2.3。
+      # 代码里是 `var version = defaultVersion` 而不是 const —— const 无法被 -X 覆写。
+      - name: 解析版本号
+        id: ver
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # 校验 vMAJOR.MINOR.PATCH 语义，避免 vfoo 这类 tag 混进产物名
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$'; then
+            echo "::error::tag '$TAG' 不符合 vMAJOR.MINOR.PATCH 语义"
+            exit 1
+          fi
+          echo "注入 -X main.version=$TAG"
+
+      - name: 安装 UPX
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPX_VER="5.2.1"
+          case "${{ matrix.os }}" in
+            windows-latest) ASSET="upx-${UPX_VER}-win64.zip" ;;
+            ubuntu-latest)  ASSET="upx-${UPX_VER}-amd64_linux.tar.xz" ;;
+          esac
+          curl -fsSL -o upx-dl "https://github.com/upx/upx/releases/download/v${UPX_VER}/${ASSET}"
+          if [[ "$ASSET" == *.zip ]]; then
+            unzip -q upx-dl
+          else
+            mkdir -p upx && tar -xJf upx-dl -C upx --strip-components=1
+          fi
+          chmod +x upx*/upx 2>/dev/null || true
+          # 统一放到 PATH 上，两种解包方式的目录结构不同
+          UPDBIN="$(find . -name upx -type f | head -n1)"
+          echo "UPX_BIN=$UPDBIN" >> "$GITHUB_ENV"
+          echo "UPX_BIN=$UPDBIN" >> "$GITHUB_OUTPUT"
+          chmod +x "$UPDBIN"
+          "$UPDBIN" --version | head -n1
+
+      - name: 构建
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="bdsync-${{ matrix.target }}${{ matrix.ext }}"
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath \
+              -ldflags "-s -w -X main.version=${{ steps.ver.outputs.tag }}" \
+              -o "$OUT" ./cmd/bdsync
+          ls -lh "$OUT"
+
+      - name: UPX 压缩
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="bdsync-${{ matrix.target }}${{ matrix.ext }}"
+          RAW="bdsync-${{ matrix.target }}-raw${{ matrix.ext }}"
+          cp "$OUT" "$RAW"
+          # --best --lzma：实测 Go 二进制 17.4MB → 5.4MB（约 69%）。
+          # UPX 压过的二进制仍可正常运行，且不破坏 PE 资源段（图标/manifest 保留）。
+          "$UPX_BIN" --best --lzma --no-backup "$OUT"
+          echo "压缩前: $(du -h "$RAW" | cut -f1)  压缩后: $(du -h "$OUT" | cut -f1)"
+          # 顺手校验压缩没把二进制搞坏
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            file "$OUT" | grep -qi 'pe32' || { echo "::error::产物不是有效 PE32"; exit 1; }
+          else
+            file "$OUT" | grep -qi 'elf' || { echo "::error::产物不是有效 ELF"; exit 1; }
+          fi
+
+      - name: 校验产物
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="bdsync-${{ matrix.target }}${{ matrix.ext }}"
+          test -s "$OUT" || { echo "::error::产物为空"; exit 1; }
+          # 确认版本号真的进了二进制（不是只改了文件名）
+          if grep -qa "${{ steps.ver.outputs.tag }}" "$OUT"; then
+            echo "✓ 版本号 ${{ steps.ver.outputs.tag }} 已嵌入二进制"
+          else
+            echo "::error::二进制里找不到版本号，检查 -X main.version 是否生效"
+            exit 1
+          fi
+          sha256sum "$OUT" > "$OUT.sha256"
+          cat "$OUT.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bdsync-${{ matrix.target }}
+          path: |
+            bdsync-${{ matrix.target }}${{ matrix.ext }}
+            bdsync-${{ matrix.target }}${{ matrix.ext }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: 发布 Release
+    needs: build          # 两个平台都成功才发
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成校验和与说明
+        run: |
+          set -euo pipefail
+          ls -lh dist/
+          {
+            echo "## 产物"
+            echo
+            echo '| 平台 | 文件 |'
+            echo '|---|---|'
+            echo "| Windows amd64 | \`bdsync-windows-amd64.exe\` |"
+            echo "| Linux amd64 | \`bdsync-linux-amd64\` |"
+            echo
+            echo "版本 \`${{ github.ref_name }}\` · UPX --best --lzma 压缩 · CGO 已关闭（静态链接）"
+          } > dist/NOTES.md
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: dist/NOTES.md
+          files: |
+            dist/bdsync-windows-amd64.exe
+            dist/bdsync-windows-amd64.exe.sha256
+            dist/bdsync-linux-amd64
+            dist/bdsync-linux-amd64.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true

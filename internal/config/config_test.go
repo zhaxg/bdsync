@@ -25,6 +25,67 @@ func TestLoadExample(t *testing.T) {
 	}
 }
 
+// history_days 写在 quota: 下（挨着 idle_threshold）必须真正生效。
+//
+// 这条容易被测不出来：默认值恰好是 90，写错成"被静默丢弃"时结果一样，
+// 只有用一个非默认值（比如 365）才能分辨。
+func TestHistoryDaysUnderQuotaTakesEffect(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bdsync.yaml")
+	yaml := `
+pair:
+    local_root: ` + dir + `
+    remote: /backup
+quota:
+    idle_threshold: 5m
+    history_days: 365
+mirror:
+    enabled: true
+`
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if cfg.Mirror.HistoryDays != 365 {
+		t.Errorf("quota.history_days 未同步到 Mirror（PruneHistory 读的是这个）: got %d, want 365",
+			cfg.Mirror.HistoryDays)
+	}
+	if cfg.Quota.HistoryDays != 365 {
+		t.Errorf("Quota.HistoryDays 应回写为 365（两处显示一致）: got %d", cfg.Quota.HistoryDays)
+	}
+}
+
+// mirror: 下的 history_days 仍是权威来源；两处都没写时用默认值。
+func TestHistoryDaysMirrorWins(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bdsync.yaml")
+	yaml := `
+pair:
+    local_root: ` + dir + `
+    remote: /backup
+quota:
+    history_days: 30
+mirror:
+    enabled: true
+    history_days: 365
+`
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	// 冲突时以 Mirror 为准，并回写到 Quota 让两处不再打架
+	if cfg.Mirror.HistoryDays != 365 || cfg.Quota.HistoryDays != 365 {
+		t.Errorf("冲突时应以 Mirror 为准: mirror=%d quota=%d, 期望都是 365",
+			cfg.Mirror.HistoryDays, cfg.Quota.HistoryDays)
+	}
+}
+
 func TestValidateRejectsPropagation(t *testing.T) {
 	cfg := Default()
 	cfg.Policy.PropagateDelete = true

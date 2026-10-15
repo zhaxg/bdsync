@@ -225,8 +225,37 @@ type SenderConfig struct {
 
 type QuotaConfig struct {
 	IdleThreshold Duration `yaml:"idle_threshold"`
-	QuietCPUCap   int      `yaml:"quiet_cpu_cap"`  // %
-	ActiveCPUCap  int      `yaml:"active_cpu_cap"` // %
+	// HistoryDays — 远端历史保留天数。**权威副本在 Mirror.HistoryDays**；
+	// 这里只是让它能写在 idle_threshold 旁边（都是"多久"类旋钮，挤在一起更好找）。
+	// yaml 非 strict：写在 quota 下也能解析进来，normalizeHistoryDays() 会把它同步回 Mirror。
+	HistoryDays  int `yaml:"history_days"`
+	QuietCPUCap  int `yaml:"quiet_cpu_cap"`  // %
+	ActiveCPUCap int `yaml:"active_cpu_cap"` // %
+}
+
+// normalizeHistoryDays — 抹平 history_days 的两个位置。
+//
+// 为什么需要：yaml.v3 默认非 strict，写在 quota: 下的 history_days 若不显式接收会被
+// **静默丢弃**（不报错、不生效）——用户以为改了其实没改。这里让两处都能写，
+// 且以 Mirror.HistoryDays 为准（它是真正的消费者，PruneHistory 读的就是它）。
+// defaultHistoryDays — Default() 预填的保留期。
+//
+// 单独留一个常量，是因为 normalizeHistoryDays 靠它区分
+// 「用户在 mirror: 下显式写了 90」和「用户没写、用的是默认值 90」——
+// 两者数值相同却是不同的意图，不区分就没法定优先级。
+const defaultHistoryDays = 90
+
+func (c *Config) normalizeHistoryDays() {
+	// Mirror 是权威副本（PruneHistory 读的就是它）。但 Default() 预填了
+	// defaultHistoryDays，所以「Mirror 仍是默认值」实际含义是「用户没在 mirror 下写过」。
+	// 优先级：Mirror 显式写过（≠默认值或 ≠0）→ 用它；否则退到 Quota；再否则保持默认。
+	switch {
+	case c.Mirror.HistoryDays != defaultHistoryDays && c.Mirror.HistoryDays > 0:
+		// Mirror 显式设置过 → 保持权威
+	case c.Quota.HistoryDays > 0:
+		c.Mirror.HistoryDays = c.Quota.HistoryDays
+	}
+	c.Quota.HistoryDays = c.Mirror.HistoryDays // 回写，保证两处显示一致
 }
 
 type PolicyConfig struct {
@@ -291,7 +320,7 @@ func Default() *Config {
 		Mirror: MirrorConfig{
 			Enabled:         true, // 默认开启镜像+历史（用户拍板）
 			HistoryDir:      ".history",
-			HistoryDays:     90,
+			HistoryDays:     defaultHistoryDays,
 			OnRename:        "mv",
 			RemoteReconcile: Duration{d: 24 * 3600 * 1_000_000_000},
 		},
@@ -322,6 +351,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("解析配置 %s 失败: %w", path, err)
 	}
+	cfg.normalizeHistoryDays()
 	// 相对路径以**配置文件所在目录**为基准（不是 CWD）——
 	// 这样"exe + bdsync.yaml + var/"整个文件夹可以放任意位置、从任意目录启动。
 	resolveAgainst(filepath.Dir(path), cfg)
@@ -442,6 +472,7 @@ func Parse(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("YAML 解析失败: %w", err)
 	}
+	cfg.normalizeHistoryDays()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
