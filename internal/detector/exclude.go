@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Matcher — 排除规则（design §14 exclude）。
+// Matcher -- 排除规则（design §14 exclude）。
 //
 // 规则语法：
 //   - 单组件 glob（如 `*.tmp`、`~$*`、`node_modules`）：命中路径的**任一组件**
@@ -20,7 +20,7 @@ type Matcher struct {
 	fold     bool
 }
 
-// NewMatcher — 编译排除规则（空规则返回可安全调用的空 Matcher）。
+// NewMatcher -- 编译排除规则（空规则返回可安全调用的空 Matcher）。
 func NewMatcher(rules []string, foldCase bool) *Matcher {
 	m := &Matcher{fold: foldCase}
 	for _, r := range rules {
@@ -37,7 +37,7 @@ func NewMatcher(rules []string, foldCase bool) *Matcher {
 	return m
 }
 
-// Match — rel（'/' 分隔）是否被排除。nil Matcher 永远返回 false。
+// Match -- rel（'/' 分隔）是否被排除。nil Matcher 永远返回 false。
 func (m *Matcher) Match(rel string) bool {
 	if m == nil || len(m.patterns) == 0 || rel == "" || rel == "." {
 		return false

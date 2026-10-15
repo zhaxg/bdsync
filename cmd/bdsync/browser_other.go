@@ -7,7 +7,7 @@ import (
 	"runtime"
 )
 
-// openBrowser — 用系统默认浏览器打开地址。
+// openBrowser -- 用系统默认浏览器打开地址。
 func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

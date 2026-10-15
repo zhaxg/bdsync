@@ -20,12 +20,12 @@ import (
 // 所有会被镜像操作销毁的远端旧版本先归档进 .history（服务器端 Move：零带宽，
 // 一次调用同时完成"历史写入 + 主树删除"），到期整目录清理。
 //
-// 幂等设计（崩溃可重入）：归档目标名确定性 —— <history>/<UTC日期>/<rel>@<r_mtime>
-//   1. Meta(目标) 已存在 ⇒ 上次移动已成功、只是记账没写 → 直接补账
+// 幂等设计（崩溃可重入）：归档目标名确定性 ---- <history>/<UTC日期>/<rel>@<r_mtime>
+//   1. Meta(目标) 已存在 => 上次移动已成功、只是记账没写 → 直接补账
 //   2. Move(源 → 目标)
-//   3. 源 31066 不存在 ⇒ 已移动过/从未存在 → 视为完成
+//   3. 源 31066 不存在 => 已移动过/从未存在 → 视为完成
 
-// archiveRemote — 归档远端主树上的旧版本。
+// archiveRemote -- 归档远端主树上的旧版本。
 //
 //	targetBaseRel：归档目标的相对路径基准（通常= 行的 rel_path）
 //	srcRel：远端源路径（改名后又删除的行，源还在改名前的位置）
@@ -49,7 +49,7 @@ func (s *Sender) archiveRemote(ctx context.Context, targetBaseRel, srcRel string
 		return false, fmt.Errorf("归档目标检查失败: %w", merr)
 	}
 
-	// 2) 目标父目录链（.history/<日期>/…）
+	// 2) 目标父目录链（.history/<日期>/...）
 	if err := s.ensureRemoteChain(target); err != nil {
 		return false, err
 	}
@@ -64,7 +64,7 @@ func (s *Sender) archiveRemote(ctx context.Context, targetBaseRel, srcRel string
 	return true, nil
 }
 
-// ensureRemoteChain — 确保 full 的父目录链存在（含 remoteRoot，不含网盘根 /）。
+// ensureRemoteChain -- 确保 full 的父目录链存在（含 remoteRoot，不含网盘根 /）。
 // 并发安全（uploadOne 的归档前置与批量阶段都会调用）。
 func (s *Sender) ensureRemoteChain(full string) error {
 	s.remoteDirsMu.Lock()
@@ -92,22 +92,22 @@ func (s *Sender) ensureRemoteChain(full string) error {
 	return nil
 }
 
-// historyDateBucket — 归档日期桶，取**本地日期**。
+// historyDateBucket -- 归档日期桶，取**本地日期**。
 //
-// 不用 UTC：用户心智是"我今天删的进今天的桶"。取 UTC 会让本地时间 00:00–08:00
-// 之间的操作落进"昨天"的桶 —— 东八区用户每天凌晨都会撞上，看起来像 bug。
+// 不用 UTC：用户心智是"我今天删的进今天的桶"。取 UTC 会让本地时间 00:00-08:00
+// 之间的操作落进"昨天"的桶 ---- 东八区用户每天凌晨都会撞上，看起来像 bug。
 //
 // 归档目标路径（archiveRemote）与日志（sender.go）必须共用本函数：两处各算一次的话，
 // 跨 UTC 零点时会出现"日志说进了 A 桶、实际进了 B 桶"。
 func historyDateBucket() string { return historyDateBucketAt(time.Now()) }
 
-// historyDateBucketAt — 给定时刻的桶名。抽出来是为了能测"取本地而非 UTC"这条不变量。
+// historyDateBucketAt -- 给定时刻的桶名。抽出来是为了能测"取本地而非 UTC"这条不变量。
 func historyDateBucketAt(t time.Time) string { return t.Format("2006-01-02") }
 
-// kvPruneAt — 历史清理时间戳（最多每日一次）。
+// kvPruneAt -- 历史清理时间戳（最多每日一次）。
 const kvPruneAt = "hist_prune_at"
 
-// pruneIfDue — 历史过期清理（kv 守卫：最多每日一次；成功才记账，失败下轮重试）。
+// pruneIfDue -- 历史过期清理（kv 守卫：最多每日一次；成功才记账，失败下轮重试）。
 func (s *Sender) pruneIfDue(ctx context.Context) {
 	raw, _ := s.st.GetKV(ctx, kvPruneAt)
 	var last int64
@@ -132,7 +132,7 @@ func (s *Sender) pruneIfDue(ctx context.Context) {
 	}
 }
 
-// forgetDir — 远端目录被删后清掉本进程的建目录缓存。
+// forgetDir -- 远端目录被删后清掉本进程的建目录缓存。
 // 不清的话后续 ensureDirs/ensureRemoteChain 会以为目录还在而跳过 Mkdir，
 // 上传就会撞 "父目录不存在"。
 func (s *Sender) forgetDir(full string) {
@@ -141,14 +141,14 @@ func (s *Sender) forgetDir(full string) {
 	s.remoteDirsMu.Unlock()
 }
 
-// pruneEmptyDirs — 删除归档后变空的远端目录（design §9.2「空目录移除」）。
+// pruneEmptyDirs -- 删除归档后变空的远端目录（design §9.2「空目录移除」）。
 //
 // 为什么必须单独做：目录从不上传，也就从不记账。
 //   - ClaimBatch 只取 is_dir=0（store.go pendingSelect）
 //   - ensureDirs 只建"批内文件的父目录"，不建空目录，且只记在内存 map 里
 //   - r_fsid 全代码库只有 FinishUpload 一处写入，那是文件上传成功的路径
 //
-// 于是目录永远没有 r_fsid，被 HistoryQueue 的 `r_fsid IS NOT NULL` 挡在门外 ——
+// 于是目录永远没有 r_fsid，被 HistoryQueue 的 `r_fsid IS NOT NULL` 挡在门外 ----
 // 文件被 Move 进 .history 了，父目录却留在远盘主树里。
 //
 // seeds 是本次归档涉及的相对目录（通常是文件所在目录）。自底向上处理：删掉一个空目录后
@@ -189,14 +189,14 @@ func (s *Sender) pruneEmptyDirs(ctx context.Context, seeds map[string]bool) int 
 				break
 			}
 			s.forgetDir(full)
-			s.logf("[·] 空目录已移除 %s/", d)
+			s.logf("[-] 空目录已移除 %s/", d)
 			removed++
 		}
 	}
 	return removed
 }
 
-// PruneHistory — 清理过期历史日期桶（服务器端递归删除；design镜像 history_days）。
+// PruneHistory -- 清理过期历史日期桶（服务器端递归删除；design镜像 history_days）。
 // 只删形如 YYYY-MM-DD 的桶；人工放进去的非日期目录永不动。
 func (s *Sender) PruneHistory(ctx context.Context, days int, dryRun bool) ([]string, error) {
 	if !s.mirrorOn || s.historyDir == "" || days <= 0 {
@@ -242,7 +242,7 @@ func (s *Sender) PruneHistory(ctx context.Context, days int, dryRun bool) ([]str
 
 // ── 改名远端同步（R 阶段，design镜像 Q1：mv 优先，零历史污染零带宽）──
 
-// drainRenames — 改名队列排空（串行；目录优先，一次 mv 整棵子树）。
+// drainRenames -- 改名队列排空（串行；目录优先，一次 mv 整棵子树）。
 func (s *Sender) drainRenames(ctx context.Context, stats *Stats) error {
 	tried := map[string]bool{}
 	for {
@@ -271,7 +271,7 @@ func (s *Sender) drainRenames(ctx context.Context, stats *Stats) error {
 	}
 }
 
-// renameOne — 单个改名的远端同步。
+// renameOne -- 单个改名的远端同步。
 func (s *Sender) renameOne(ctx context.Context, it index.PendingRenamed, stats *Stats) {
 	// history 策略（配置降级）：归档旧版 + 正常流程重传
 	if s.onRename == "history" {
@@ -292,7 +292,7 @@ func (s *Sender) renameOne(ctx context.Context, it index.PendingRenamed, stats *
 			s.logf("[!] %s 改名记账失败: %v", it.RelPath, err)
 		}
 		stats.apply(func(st *Stats) { st.Renamed++ })
-		s.logf("[↻] %s → %s（history 策略：归档+重传）", it.OldPath, it.RelPath)
+		s.logf("[[~]] %s → %s（history 策略：归档+重传）", it.OldPath, it.RelPath)
 		return
 	}
 
@@ -335,7 +335,7 @@ func (s *Sender) renameOne(ctx context.Context, it index.PendingRenamed, stats *
 	s.finishRenameMv(ctx, it, stats)
 }
 
-// finishRenameMv — mv 成功后的记账：
+// finishRenameMv -- mv 成功后的记账：
 //
 //	文件：本地未变 → 撤回到 IDENTICAL（远端内容已随 mv 到位）；
 //	     本地已变 → 保持待传（上传前置归档会先处理刚移过来的旧版）
@@ -362,7 +362,7 @@ func (s *Sender) finishRenameMv(ctx context.Context, it index.PendingRenamed, st
 			}
 		}
 		stats.apply(func(st *Stats) { st.Renamed++ })
-		s.logf("[↻] %s → %s（远端整棵移动，%d 个子文件确认一致）", it.OldPath, it.RelPath, settled)
+		s.logf("[[~]] %s → %s（远端整棵移动，%d 个子文件确认一致）", it.OldPath, it.RelPath, settled)
 		return
 	}
 
@@ -376,13 +376,13 @@ func (s *Sender) finishRenameMv(ctx context.Context, it index.PendingRenamed, st
 		s.logf("[!] %s 改名记账失败: %v", it.RelPath, err)
 	}
 	stats.apply(func(st *Stats) { st.Renamed++ })
-	s.logf("[↻] %s → %s（远端已移动%s）", it.OldPath, it.RelPath,
+	s.logf("[[~]] %s → %s（远端已移动%s）", it.OldPath, it.RelPath,
 		map[bool]string{true: "，内容一致", false: "，本地内容另有变更待传"}[identical])
 }
 
-// ── 远端清单对账（design镜像 Q2：RA 主树路径清单 ≡ 本地清单，清单外 → 归档）──
+// ── 远端清单对账（design镜像 Q2：RA 主树路径清单 == 本地清单，清单外 → 归档）──
 
-// ReconcileResult — 对账结果。
+// ReconcileResult -- 对账结果。
 type ReconcileResult struct {
 	DryRun        bool
 	Dirs          int // 远端目录数（不含 .history）
@@ -402,7 +402,7 @@ func (r *ReconcileResult) Summary() string {
 		r.Elapsed.Round(time.Millisecond))
 }
 
-// ReconcileRemote — 全量列举 RA 并与本地清单对账：
+// ReconcileRemote -- 全量列举 RA 并与本地清单对账：
 //   - 并发 BFS 列举（跳过 .history；即 design Phase3.12 的"并发 BFS"落地）
 //   - 清单外文件 → 逐个归档；清单外目录 → 浅者先整棵一次归档（深者届时源已不存在，自动跳过）
 //   - 本地有、远端缺的目录（含空目录）→ 补建（保证"完全映射"）
@@ -512,7 +512,7 @@ func (s *Sender) ReconcileRemote(ctx context.Context, dryRun bool) (*ReconcileRe
 				s.logf("[对账] 补建目录失败 %s: %v", rel, err)
 				continue
 			}
-			s.logf("[对账·补建] %s/", rel)
+			s.logf("[对账-补建] %s/", rel)
 		}
 	}
 
@@ -574,7 +574,7 @@ func (s *Sender) ReconcileRemote(ctx context.Context, dryRun bool) (*ReconcileRe
 		if len(res.Samples) < 50 {
 			res.Samples = append(res.Samples, u.rel+suffix)
 		}
-		s.logf("[对账·归档] %s%s", u.rel, suffix)
+		s.logf("[对账-归档] %s%s", u.rel, suffix)
 	}
 	sort.Slice(unknownFiles, func(i, j int) bool { return unknownFiles[i].rel < unknownFiles[j].rel })
 	for _, u := range unknownFiles {

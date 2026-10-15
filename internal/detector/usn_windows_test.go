@@ -8,7 +8,7 @@ import (
 	"unicode/utf16"
 )
 
-// buildV2 — 合成 USN_RECORD_V2。
+// buildV2 -- 合成 USN_RECORD_V2。
 func buildV2(t *testing.T, reason uint32, attrs uint32, ref, parent uint64, usn uint64, name string) []byte {
 	t.Helper()
 	u16 := utf16.Encode([]rune(name))
@@ -37,7 +37,7 @@ func buildV2(t *testing.T, reason uint32, attrs uint32, ref, parent uint64, usn 
 	return b
 }
 
-// buildV4 — 合成 USN_RECORD_V4（128 位引用号变体）。
+// buildV4 -- 合成 USN_RECORD_V4（128 位引用号变体）。
 func buildV4(t *testing.T, reason uint32, attrs uint64, ref, parent, usn uint64, name string) []byte {
 	t.Helper()
 	u16 := utf16.Encode([]rune(name))

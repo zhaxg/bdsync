@@ -10,10 +10,10 @@ import (
 	"bdsync/internal/netdiskname"
 )
 
-// ApplyChanges — 把变更路径集合落到索引（usn 模式专用）：
+// ApplyChanges -- 把变更路径集合落到索引（usn 模式专用）：
 // 逐路径 stat + 点查比对 + 分批原子写。
 //
-// 硬规矩②：判定逻辑永远读索引，不读事件流 —— 任何后端只是性能优化，
+// 硬规矩2)：判定逻辑永远读索引，不读事件流 ---- 任何后端只是性能优化，
 // 不可能引入正确性 bug。
 //
 // exclude 与 poll 共用同一套语义：被排除的路径归入 vanished（→ REMOVED_LOCAL，
@@ -96,7 +96,7 @@ func ApplyChanges(ctx context.Context, st *index.Store, root string,
 				Size: size, MtimeNs: mtime, State: index.StateLocalNew,
 			})
 		case rec.IsDir != isDir:
-			// 类型变化（文件↔目录）：按新形态重建
+			// 类型变化（文件<->目录）：按新形态重建
 			modified++
 			batch = append(batch, index.Change{
 				Kind: index.ChangeUpdate, RelPath: rel, IsDir: isDir,

@@ -18,7 +18,7 @@ import (
 	"bdsync/web"
 )
 
-// trace — 诊断用分步追踪（设 BDSYNC_TRACE=<文件> 开启）。
+// trace -- 诊断用分步追踪（设 BDSYNC_TRACE=<文件> 开启）。
 // 存在的意义：崩溃类问题在 stderr 里常常什么都不剩（进程被直接带走），
 // 靠这个文件可以精确定位"死在哪一步"。
 func trace(format string, a ...any) {
@@ -34,7 +34,7 @@ func trace(format string, a ...any) {
 	_ = f.Close()
 }
 
-// cmdWeb — 双击入口：先起看板，再谈配置。
+// cmdWeb -- 双击入口：先起看板，再谈配置。
 //
 // 设计意图（降低门槛）：
 //
@@ -149,7 +149,7 @@ func cmdWeb(args []string) error {
 	return nil
 }
 
-// printBanner — 启动横幅。
+// printBanner -- 启动横幅。
 //
 // 只打印地址、**绝不自动打开浏览器**：双击场景下弹窗口很突兀，
 // 而且服务化（nssm）后根本没有桌面会话。地址做成纯文本，终端里
@@ -163,27 +163,27 @@ func printBanner(url string, initialized bool, setupErr error) {
 	fmt.Println("             （在终端里按住 Ctrl 单击上面的地址即可用浏览器打开）")
 	switch {
 	case !initialized:
-		fmt.Println("   当前状态： 还没初始化 —— 在网页里填「本地目录 / 网盘目录 / 凭据」")
+		fmt.Println("   当前状态： 还没初始化 ---- 在网页里填「本地目录 / 网盘目录 / 凭据」")
 		fmt.Println("             （三项就行；填错会留在页面上，不会退出）")
 	case setupErr != nil:
-		fmt.Println("   当前状态： 已初始化，但启动备份运行时失败 ——")
+		fmt.Println("   当前状态： 已初始化，但启动备份运行时失败 ----")
 		for _, line := range strings.Split(setupErr.Error(), "\n") {
 			fmt.Println("             " + strings.TrimRight(line, "\r"))
 		}
 		fmt.Println("             （在看板「配置 → 网盘凭据」里补录 cookie 即可恢复）")
 	default:
-		fmt.Println("   当前状态： 正在启动备份运行时…")
+		fmt.Println("   当前状态： 正在启动备份运行时...")
 	}
 	fmt.Println("   停止服务： 关闭本窗口 / 按 Ctrl+C")
 	fmt.Println("  ============================================================")
 	fmt.Println()
 }
 
-// isInitialized — 是否已完成首次初始化。
+// isInitialized -- 是否已完成首次初始化。
 //
 // 判据（任一成立）：
 //  1. 配置文件里 service.initialized: true（新版本向导写入的显式标记）
-//  2. 老配置没有标记，但配置文件存在且 pair 齐全 —— 那本来就是"配过了"
+//  2. 老配置没有标记，但配置文件存在且 pair 齐全 ---- 那本来就是"配过了"
 //
 // 只问"填过没有"，不问"现在能不能跑起来"：cookie 过期是运行时问题，
 // 由看板凭据卡片修复，不该让人重走一遍向导。
@@ -197,7 +197,7 @@ func isInitialized(cfg *config.Config) bool {
 	return appCfgPath != "" && fileExists(appCfgPath) && cfg.ValidatePair() == nil
 }
 
-// firstLine — 只取首行（横幅里一行一条，避免大段错误糊在一行）。
+// firstLine -- 只取首行（横幅里一行一条，避免大段错误糊在一行）。
 
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -206,7 +206,7 @@ func firstLine(s string) string {
 	return s
 }
 
-// isAddrInUse — 端口被占用（另一个实例已在跑）。
+// isAddrInUse -- 端口被占用（另一个实例已在跑）。
 func isAddrInUse(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "only one usage of each socket address") ||
@@ -214,14 +214,14 @@ func isAddrInUse(err error) bool {
 		strings.Contains(msg, "address already in use")
 }
 
-// runWebEntry — web 模式的统一入口（双击 exe 无参数时也走这里）。
+// runWebEntry -- web 模式的统一入口（双击 exe 无参数时也走这里）。
 func runWebEntry(args []string) {
 	if err := cmdWeb(args); err != nil {
-		fmt.Fprintln(os.Stderr, "✗", err)
+		fmt.Fprintln(os.Stderr, "[X]", err)
 		// 双击场景：停下来让人读到错误（服务模式下绝不等按键，见 creds_api.go）
 		fmt.Println()
 		pauseBeforeExit()
-		os.Exit(1)
+		exitProcess(1) // 不用 os.Exit：转码管道要收尾（console_windows.go）
 	}
 }
 
@@ -246,7 +246,7 @@ type setupState struct {
 	configPath string
 	version    string
 
-	// initialized — 已完成首次初始化（配置文件 service.initialized 或老配置齐全）。
+	// initialized -- 已完成首次初始化（配置文件 service.initialized 或老配置齐全）。
 	// 为 true 时页面不再显示向导：cookie 过期只是运行时错误，用「凭据」卡片就地修。
 	initialized bool
 
@@ -261,12 +261,12 @@ type setupState struct {
 	// 凭据（内存态，落盘由 creds.go 处理）
 	cookie string
 
-	// notice — 需要跨页面刷新保留的提示（如自动分库说明）
+	// notice -- 需要跨页面刷新保留的提示（如自动分库说明）
 	notice string
 
-	// procParent — 进程级上下文（Ctrl+C/SIGTERM）；每次 launchService 挂它下面
+	// procParent -- 进程级上下文（Ctrl+C/SIGTERM）；每次 launchService 挂它下面
 	procParent context.Context
-	// procCancel — 取消 procParent（看板「停止」按钮用：语义是结束进程）
+	// procCancel -- 取消 procParent（看板「停止」按钮用：语义是结束进程）
 	procCancel context.CancelFunc
 
 	// 外层看板（向导阶段就已存在；运行时复用，避免二次监听同一端口）
@@ -285,7 +285,7 @@ func (s *setupState) setNotice(msg string) {
 	s.mu.Unlock()
 }
 
-// state — /api/setup 的引导状态（页面据此决定显示向导还是控制台）。
+// state -- /api/setup 的引导状态（页面据此决定显示向导还是控制台）。
 func (s *setupState) state() any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,7 +318,7 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// control — 服务未就绪时的控制面（停止可用，其余是安全的空操作）。
+// control -- 服务未就绪时的控制面（停止可用，其余是安全的空操作）。
 func (s *setupState) ctrl() web.Control { return &setupControl{s: s} }
 
 type setupControl struct{ s *setupState }
@@ -327,7 +327,7 @@ func (c *setupControl) Pause() bool  { return false }
 func (c *setupControl) Resume() bool { return false }
 func (c *setupControl) Paused() bool { return false }
 
-// Stop — 「停止」按钮的语义是**结束进程**（页面上写的就是这句），
+// Stop -- 「停止」按钮的语义是**结束进程**（页面上写的就是这句），
 // 所以取消进程级上下文，而不是只停一次运行时：否则进程还活着、端口还被占着，
 // nssm 会认为服务没停，双击场景下窗口也会留个僵尸挂着。
 func (c *setupControl) Stop() {
@@ -343,7 +343,7 @@ func (c *setupControl) Stop() {
 	}
 }
 
-// status — 服务未运行时给出"没在跑"的状态；运行后交给真实 provider。
+// status -- 服务未运行时给出"没在跑"的状态；运行后交给真实 provider。
 //
 // stopped 的取值刻意区分两件事：未初始化（还没配置，页面该显示向导）
 // 与 已初始化但没起来（cookie 过期/磁盘满之类，页面该显示控制台 + 错误）。
@@ -484,7 +484,7 @@ func (s *setupState) apply(payload map[string]any) (string, error) {
 		}
 	}
 	s.launchService()
-	return "配置已保存，正在启动备份…", nil
+	return "配置已保存，正在启动备份...", nil
 }
 
 func defaultConfigPath() string {
@@ -494,7 +494,7 @@ func defaultConfigPath() string {
 	return "bdsync.yaml"
 }
 
-// startService — 起备份运行时；错误回传页面（进程继续活着）。
+// startService -- 起备份运行时；错误回传页面（进程继续活着）。
 func (s *setupState) startService(parent context.Context) {
 	trace("startService: 进入")
 	cfg := config.Clone(appCfg)
@@ -541,7 +541,7 @@ func (s *setupState) startService(parent context.Context) {
 
 	select {
 	case <-ctx.Done():
-		// 必须等 runService 真正退出（关索引库、关日志都在它的 defer 里）——
+		// 必须等 runService 真正退出（关索引库、关日志都在它的 defer 里）----
 		// 否则 restartService 起的新实例会撞上 SQLite 写锁。
 		// errCh 有 1 个缓冲，runService 收到 cancel 后一定会发，不会死锁。
 		<-errCh
@@ -564,17 +564,17 @@ func (s *setupState) fail(err error) {
 		s.svcErr = err
 	}
 	s.mu.Unlock()
-	// err == nil 表示"正常停止"（信号/看板点停止）——既不是失败，也别覆盖已知错误
+	// err == nil 表示"正常停止"（信号/看板点停止）----既不是失败，也别覆盖已知错误
 	if err != nil && setupHub != nil {
 		setupHub.Append("[!] " + err.Error())
 	}
 }
 
-// launchService — 同步完成"起运行时"的状态布置，再交给 goroutine。
+// launchService -- 同步完成"起运行时"的状态布置，再交给 goroutine。
 //
 // 拆出来的原因：换 cookie 后要**等旧的完全退出**再起新的。startService 收到
 // cancel 后还要走完 runService 的 defer（关索引库、关日志），这期间新进程起来
-// 会撞上 SQLite 写锁 —— 所以 svcDone 必须在启动前就建好，而不是等 goroutine
+// 会撞上 SQLite 写锁 ---- 所以 svcDone 必须在启动前就建好，而不是等 goroutine
 // 被调度到才创建。
 //
 // parent 是**进程级**生命周期上下文（Ctrl+C / SIGTERM）：向导里反复起停用的
@@ -599,7 +599,7 @@ func (s *setupState) launchService(parent ...context.Context) {
 	}()
 }
 
-// procCtx — 进程级生命周期上下文（cmdWeb 注入）；未注入时退化为 Background。
+// procCtx -- 进程级生命周期上下文（cmdWeb 注入）；未注入时退化为 Background。
 func (s *setupState) procCtx() context.Context {
 	s.mu.Lock()
 	c := s.procParent
@@ -610,11 +610,11 @@ func (s *setupState) procCtx() context.Context {
 	return c
 }
 
-// restartService — 凭据更换后重建备份运行时（停旧 → 等干净 → 起新）。
+// restartService -- 凭据更换后重建备份运行时（停旧 → 等干净 → 起新）。
 //
 // 为什么必须重启而非热替换：cookie 在 runService 里被固化进 baidu.Client，
 // sender/mirror 持有它并在几十处无锁裸读。热替换要给整条链加锁换指针，
-// 换来的只是省一次秒级重启 —— 不划算。
+// 换来的只是省一次秒级重启 ---- 不划算。
 func (s *setupState) restartService() error {
 	s.mu.Lock()
 	stop, done := s.stopSvc, s.svcDone
@@ -634,7 +634,7 @@ func (s *setupState) restartService() error {
 	return nil
 }
 
-// currentCookie — 当前生效的 cookie 及其来源。
+// currentCookie -- 当前生效的 cookie 及其来源。
 // 顺序刻意跟 loadCookie 一致：本次录入 > 环境变量 > credentials.dat。
 // 来源必须跟着值一起返回，否则 startService 只能一律标成 session，
 // 冷启动从文件读回来的会被误报成"仅本次进程（未保存）"。
@@ -662,10 +662,10 @@ func (s *setupState) currentCookie() (cookie, src string) {
 
 // setupHub 由 cmdWeb 注入（向导阶段的日志也要进 SSE）。
 
-// splitDBForNewRoot — 既有索引库绑的是别的本地目录时，自动改用一份新库。
+// splitDBForNewRoot -- 既有索引库绑的是别的本地目录时，自动改用一份新库。
 //
 // 一份索引库只对应一个备份对（这是有意的一致性约束）。既然向导里换目录
-// 就意味着换一次备份，直接报错让人理解成本太高 —— 这里代为分家：
+// 就意味着换一次备份，直接报错让人理解成本太高 ---- 这里代为分家：
 // 新库名 index-<目录名>.db（冲突再加序号），旧库原地保留、一行不改。
 func splitDBForNewRoot(cfg *config.Config, root string) (string, error) {
 	dbPath := cfg.Service.DBPath
@@ -705,7 +705,7 @@ func splitDBForNewRoot(cfg *config.Config, root string) (string, error) {
 	}
 }
 
-// sanitizeName — 文件名安全化（Windows 非法字符 → _）。
+// sanitizeName -- 文件名安全化（Windows 非法字符 → _）。
 func sanitizeName(s string) string {
 	repl := func(r rune) rune {
 		switch r {
@@ -722,7 +722,7 @@ func sanitizeName(s string) string {
 	return out
 }
 
-// probe — 检测本地目录（只读遍历前两层，快速反馈路径是否填对）。
+// probe -- 检测本地目录（只读遍历前两层，快速反馈路径是否填对）。
 func (s *setupState) probe(root string) (int, int, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
@@ -754,7 +754,7 @@ func (s *setupState) probe(root string) (int, int, error) {
 
 // ── 网盘凭据（cookie 过期时就地换，不必重走向导）─────────────────
 
-// credsStatus — /api/credentials GET。只有来源元信息，**不含凭据内容**。
+// credsStatus -- /api/credentials GET。只有来源元信息，**不含凭据内容**。
 func (s *setupState) credsStatus() map[string]any {
 	s.mu.Lock()
 	running := s.running
@@ -763,7 +763,7 @@ func (s *setupState) credsStatus() map[string]any {
 
 	st := credsStatusPublic()
 	st["running"] = running
-	// 有 s.cookie 说明本次进程内录入过（可能还没落盘）——如实报 session
+	// 有 s.cookie 说明本次进程内录入过（可能还没落盘）----如实报 session
 	if locked && st["source"] == "none" {
 		st["source"] = "session"
 		st["has"] = true
@@ -771,7 +771,7 @@ func (s *setupState) credsStatus() map[string]any {
 	return st
 }
 
-// credsSave — /api/credentials POST。
+// credsSave -- /api/credentials POST。
 //
 // 流程：解析并校验 → 内存生效 → 按 remember 落盘 → 重启运行时换上新 cookie。
 // 顺序有讲究：先落内存再落盘，盘写失败时仍能用本次会话跑起来（报错但不卡死）；

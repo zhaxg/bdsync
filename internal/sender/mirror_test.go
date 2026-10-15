@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// 归档日期桶必须取**本地日期**。曾经用 time.Now().UTC()，导致本地时间 00:00–08:00
-// 之间的删除全部落进"昨天"的桶 —— 东八区用户每天凌晨都会撞上，看起来像 bug。
+// 归档日期桶必须取**本地日期**。曾经用 time.Now().UTC()，导致本地时间 00:00-08:00
+// 之间的删除全部落进"昨天"的桶 ---- 东八区用户每天凌晨都会撞上，看起来像 bug。
 func TestHistoryDateBucketUsesLocalDate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -30,7 +30,7 @@ func TestHistoryDateBucketUsesLocalDate(t *testing.T) {
 			}
 			// 反向断言：确认这些用例确实与 UTC 日期不同（否则测试是空转的）
 			if utc := ts.UTC().Format("2006-01-02"); utc != got {
-				t.Logf("确认：本地 %s ≠ UTC %s（本用例有效）", got, utc)
+				t.Logf("确认：本地 %s != UTC %s（本用例有效）", got, utc)
 			}
 		})
 	}

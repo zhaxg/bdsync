@@ -4,7 +4,7 @@ package detector
 
 // NTFS USN Journal 检测后端（design §4.2）。
 //
-// 关键性质：空闲时只读内核已缓存的 journal——不打开任何文件、不唤醒磁盘、
+// 关键性质：空闲时只读内核已缓存的 journal----不打开任何文件、不唤醒磁盘、
 // 成本与目录规模无关。丢失可检测：journal ID 变化 / 游标低于 LowestValidUsn
 // → 回退全量扫描（这是正常路径，不是异常，design §4.2d）。
 //
@@ -64,7 +64,7 @@ type usnRecord struct {
 	Name      string
 }
 
-// UsnBackend — 卷级 USN 读取器。
+// UsnBackend -- 卷级 USN 读取器。
 type UsnBackend struct {
 	root    string // 普通绝对路径
 	volPath string // \\?\E:
@@ -90,7 +90,7 @@ func (u *UsnBackend) Close() error {
 	return nil
 }
 
-// SelfTest — 写探测文件并确认 journal 事件可达（唯一能发现"环境变了"的手段，design 硬规矩①）。
+// SelfTest -- 写探测文件并确认 journal 事件可达（唯一能发现"环境变了"的手段，design 硬规矩1)）。
 // 只由显式 `bdsync selftest` 命令触发（会向 root 写入并删除一个临时文件）。
 func (u *UsnBackend) SelfTest(ctx context.Context, root string) error {
 	probeRel := fmt.Sprintf(".bdsync-probe-%d.tmp", time.Now().UnixNano())
@@ -116,7 +116,7 @@ func (u *UsnBackend) SelfTest(ctx context.Context, root string) error {
 	return fmt.Errorf("10s 内未收到探测文件的 USN 事件（后端可能已静默失效）")
 }
 
-// OpenUsn — 打开卷（只读）并取 root 引用号。
+// OpenUsn -- 打开卷（只读）并取 root 引用号。
 func OpenUsn(root string, st *index.Store) (*UsnBackend, error) {
 	abs, err := normalizeWalkRoot(root) // \\?\D:\data 形式
 	if err != nil {
@@ -149,7 +149,7 @@ func OpenUsn(root string, st *index.Store) (*UsnBackend, error) {
 	return &UsnBackend{root: root, volPath: vol, rootRef: rootRef, h: h, store: st}, nil
 }
 
-// readMeta — FSCTL_USN_READ_JOURNAL 取日志元数据（V2 含 JournalID，失败退 V0）。
+// readMeta -- FSCTL_USN_READ_JOURNAL 取日志元数据（V2 含 JournalID，失败退 V0）。
 func (u *UsnBackend) readMeta() (journalMeta, error) {
 	var out [64]byte
 	var returned uint32
@@ -177,7 +177,7 @@ func (u *UsnBackend) readMeta() (journalMeta, error) {
 	return journalMeta{}, fmt.Errorf("journal 元数据过短: %d 字节", returned)
 }
 
-// readBatch — FSCTL_READ_USN_JOURNAL 从 startUsn 起读一批记录。
+// readBatch -- FSCTL_READ_USN_JOURNAL 从 startUsn 起读一批记录。
 func (u *UsnBackend) readBatch(startUsn, journalID uint64) (uint64, []usnRecord, error) {
 	var in [40]byte
 	le := binary.LittleEndian
@@ -205,7 +205,7 @@ func (u *UsnBackend) readBatch(startUsn, journalID uint64) (uint64, []usnRecord,
 	return next, parseUsnRecords(buf[8:returned]), nil
 }
 
-// parseUsnRecords — 防御性解析 USN_RECORD_V2/V4（design 附录 A：V2 需 Win8.1+；
+// parseUsnRecords -- 防御性解析 USN_RECORD_V2/V4（design 附录 A：V2 需 Win8.1+；
 // V4 为 128 位引用号变体，按长度自适应）。
 func parseUsnRecords(b []byte) []usnRecord {
 	le := binary.LittleEndian
@@ -267,7 +267,7 @@ func parseUsnRecords(b []byte) []usnRecord {
 	return out
 }
 
-// UsnCycleResult — 一轮 journal 检测的结果。
+// UsnCycleResult -- 一轮 journal 检测的结果。
 type UsnCycleResult struct {
 	Changed        []string // 值得看一眼的路径（相对 root，'/' 分隔）
 	Deleted        []string
@@ -279,8 +279,8 @@ type UsnCycleResult struct {
 	JournalNext    uint64
 }
 
-// DetectCycle — 读一段 journal，产出变更/删除路径集合。
-// 硬规矩②：这里只产出"值得看一眼"的路径；判定永远由上层读索引完成。
+// DetectCycle -- 读一段 journal，产出变更/删除路径集合。
+// 硬规矩2)：这里只产出"值得看一眼"的路径；判定永远由上层读索引完成。
 func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 	res := &UsnCycleResult{}
 
@@ -402,7 +402,7 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 			case rec.Reason&reasonFileDelete != 0:
 				if p, ok := resolve(rec.ParentRef, rec.Name); ok {
 					deleted[p] = true
-					// 目录删除：dir_ref 留陈旧项，下次全量重建自愈（design §4.9 硬规矩③）
+					// 目录删除：dir_ref 留陈旧项，下次全量重建自愈（design §4.9 硬规矩3)）
 				}
 
 			case isDir && rec.Reason&reasonFileCreate != 0:
@@ -470,7 +470,7 @@ func parseU64(b []byte) (uint64, error) {
 	return v, nil
 }
 
-// RunUsnCycle — 一轮 usn 检测 + 点查写库（查询次数 ∝ 变更数，design §4.7）。
+// RunUsnCycle -- 一轮 usn 检测 + 点查写库（查询次数 ∝ 变更数，design §4.7）。
 // FullScan=true 时上层必须回退 poll 全量扫描（这轮的变更不做删除判定）。
 func RunUsnCycle(ctx context.Context, root string, st *index.Store, exclude []string) (*ScanResult, bool, error) {
 	start := time.Now()
@@ -520,7 +520,7 @@ func RunUsnCycle(ctx context.Context, root string, st *index.Store, exclude []st
 	return res, false, nil
 }
 
-// decodeUTF16 — USN 记录里的文件名（UTF-16LE）→ UTF-8。
+// decodeUTF16 -- USN 记录里的文件名（UTF-16LE）→ UTF-8。
 func decodeUTF16(b []byte) string {
 	if len(b)%2 != 0 {
 		b = b[:len(b)-1]
@@ -532,7 +532,7 @@ func decodeUTF16(b []byte) string {
 	return string(utf16.Decode(u))
 }
 
-// RunUsnSelftest — 显式自检入口（bdsync selftest 用）：写探测文件并等 journal 事件。
+// RunUsnSelftest -- 显式自检入口（bdsync selftest 用）：写探测文件并等 journal 事件。
 func RunUsnSelftest(ctx context.Context, root string, st *index.Store) error {
 	u, err := OpenUsn(root, st)
 	if err != nil {

@@ -3,7 +3,7 @@ package main
 import "testing"
 
 // 看板整行粘贴的 cookie 有几十项，只该留 BDUSS / STOKEN / BAIDUID，
-// 且值里的引号等非法字节必须清掉 —— 否则 net/http 每次请求都会刷
+// 且值里的引号等非法字节必须清掉 ---- 否则 net/http 每次请求都会刷
 // 「invalid byte '"' in Cookie.Value; dropping invalid bytes」。
 func TestCookieFromPayloadTrims(t *testing.T) {
 	cookie, warn, empty, err := cookieFromPayload(map[string]any{

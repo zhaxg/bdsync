@@ -26,17 +26,17 @@ import (
 	"github.com/qjfoidnh/BaiduPCS-Go/baidupcs/pcserror"
 )
 
-// DefaultAppID — fork 的 pcsconfig 默认值（实测 250528 会触发 31030 pcs token not exist）。
+// DefaultAppID -- fork 的 pcsconfig 默认值（实测 250528 会触发 31030 pcs token not exist）。
 const DefaultAppID = 266719
 
-// Policy — 同名文件处理策略（fork 里是 var 不是 const）。备份场景用 overwrite。
+// Policy -- 同名文件处理策略（fork 里是 var 不是 const）。备份场景用 overwrite。
 var (
 	PolicyOverwrite = baidupcs.OverWritePolicy
 	PolicySkip      = baidupcs.SkipPolicy
 	PolicyRsync     = baidupcs.RsyncPolicy
 )
 
-// Client — 单账号会话（cookie 认证）。
+// Client -- 单账号会话（cookie 认证）。
 type Client struct {
 	pcs       *baidupcs.BaiduPCS
 	cookieStr string
@@ -46,7 +46,7 @@ type Client struct {
 	ukOK bool
 }
 
-// New — cookieStr 形如 "BDUSS=xxx; STOKEN=yyy"（STOKEN 可选，部分 pan 接口需要）。
+// New -- cookieStr 形如 "BDUSS=xxx; STOKEN=yyy"（STOKEN 可选，部分 pan 接口需要）。
 func New(appID int, cookieStr string) (*Client, error) {
 	// 统一过一遍规范化：只留 BDUSS/STOKEN/BAIDUID，并清掉 net/http 会告警丢弃的非法
 	// 字节（老版本把浏览器整串 cookie 存进 credentials.dat，其中 RT 的值带引号，
@@ -64,7 +64,7 @@ func New(appID int, cookieStr string) (*Client, error) {
 	}, nil
 }
 
-// UK — 秒传V2 的偏移计算需要用户 uk（SDK 内部带 24h 缓存）。
+// UK -- 秒传V2 的偏移计算需要用户 uk（SDK 内部带 24h 缓存）。
 func (c *Client) UK() (int64, error) {
 	c.ukMu.Lock()
 	defer c.ukMu.Unlock()
@@ -79,7 +79,7 @@ func (c *Client) UK() (int64, error) {
 	return uk, nil
 }
 
-// RapidResult — 秒传V2 响应中的可用信息（含 uploadid，秒传未命中时分片要用）。
+// RapidResult -- 秒传V2 响应中的可用信息（含 uploadid，秒传未命中时分片要用）。
 type RapidResult struct {
 	ReturnType int
 	UploadID   string
@@ -90,7 +90,7 @@ type RapidResult struct {
 	Mtime      int64
 }
 
-// RapidUploadV2 — 秒传（design §7 步骤3）。uploadID 首次传 ""；
+// RapidUploadV2 -- 秒传（design §7 步骤3）。uploadID 首次传 ""；
 // 秒传未命中时（31079 等）响应里的 UploadID 用于后续分片上传。
 // 返回值：结果可能携带 UploadID，即使 err != nil 也可用。
 func (c *Client) RapidUploadV2(targetPath, policy, uploadID, contentMD5, sliceMD5, b64Content, crc32 string,
@@ -114,7 +114,7 @@ func (c *Client) RapidUploadV2(targetPath, policy, uploadID, contentMD5, sliceMD
 	return out, nil
 }
 
-// FakeRapidUpload — 不做秒传，仅为拿 uploadid（断点续传/跳过秒传时用）。
+// FakeRapidUpload -- 不做秒传，仅为拿 uploadid（断点续传/跳过秒传时用）。
 func (c *Client) FakeRapidUpload(targetPath, policy string, length int64) (string, error) {
 	perr, res := c.pcs.FakeRapidUpload(targetPath, policy, length)
 	if perr != nil {
@@ -132,7 +132,7 @@ var uploadTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 }
 
-// UploadSingle — 单请求直传（老式 method=upload）。0 字节文件等无法走分片/秒传的场景用。
+// UploadSingle -- 单请求直传（老式 method=upload）。0 字节文件等无法走分片/秒传的场景用。
 func (c *Client) UploadSingle(targetPath, policy string, r io.Reader, size int64) error {
 	rc, perr := c.pcs.PrepareUpload(policy, targetPath, c.blockUploadFunc(r, size))
 	if perr != nil {
@@ -160,11 +160,11 @@ func (c *Client) UploadSingle(targetPath, policy string, r io.Reader, size int64
 	return nil
 }
 
-// UploadBlock — 上传一个分片（与上游 PCSUpload.TmpFile 同法：multipart 字段名 uploadedfile）。
+// UploadBlock -- 上传一个分片（与上游 PCSUpload.TmpFile 同法：multipart 字段名 uploadedfile）。
 // data 为该分片的数据源，size 为分片字节数。返回服务端给出的分片 md5。
 //
 // 注意：服务端拒绝 chunked 编码（31211 transfer-encoding can't be chunked），
-// 必须带 Content-Length —— 先把整个分片（典型 4MB，上限 64MB）读进内存再发。
+// 必须带 Content-Length ---- 先把整个分片（典型 4MB，上限 64MB）读进内存再发。
 func (c *Client) UploadBlock(targetPath, uploadID string, partseq int, partOffset int64, data io.Reader, size int64) (string, error) {
 	md5sum, perr := c.pcs.UploadTmpFile(uploadID, targetPath, partseq, partOffset, c.blockUploadFunc(data, size))
 	if perr != nil {
@@ -173,7 +173,7 @@ func (c *Client) UploadBlock(targetPath, uploadID string, partseq int, partOffse
 	return md5sum, nil
 }
 
-// blockUploadFunc — SDK 的 UploadFunc 回调：自行完成 multipart POST。
+// blockUploadFunc -- SDK 的 UploadFunc 回调：自行完成 multipart POST。
 //   - 先构建完整 body（带 Content-Length，服务端不接受 chunked）
 //   - SDK 生成的 URL 是 http://，直接升级 https 并禁止重定向（body 不可重放）
 //   - cookie 手工附加
@@ -214,7 +214,7 @@ func (c *Client) blockUploadFunc(r io.Reader, size int64) baidupcs.UploadFunc {
 	}
 }
 
-// CreateSuperFile — 合并分片为最终文件（design §7 步骤5）。
+// CreateSuperFile -- 合并分片为最终文件（design §7 步骤5）。
 func (c *Client) CreateSuperFile(targetPath, uploadID, policy string, fileSize int64, checksumMap map[int]string) error {
 	if perr := c.pcs.UploadCreateSuperFile(uploadID, policy, fileSize, targetPath, checksumMap); perr != nil {
 		return perr
@@ -222,7 +222,7 @@ func (c *Client) CreateSuperFile(targetPath, uploadID, policy string, fileSize i
 	return nil
 }
 
-// Move — 远端移动文件/目录（pan API，服务器端改位置：零带宽、不下载不重传）。
+// Move -- 远端移动文件/目录（pan API，服务器端改位置：零带宽、不下载不重传）。
 // 镜像模式的归档（历史+主树删除一步完成）与改名同步都靠它。
 func (c *Client) Move(from, to string) error {
 	if perr := c.pcs.Move(&baidupcs.CpMvJSON{From: from, To: to}); perr != nil {
@@ -231,7 +231,7 @@ func (c *Client) Move(from, to string) error {
 	return nil
 }
 
-// RemoteMissing — 判断错误是否为"远端路径不存在"（31066 / -9）。
+// RemoteMissing -- 判断错误是否为"远端路径不存在"（31066 / -9）。
 func RemoteMissing(err error) bool {
 	pe, ok := AsPCSError(err)
 	if !ok {
@@ -241,7 +241,7 @@ func RemoteMissing(err error) bool {
 	return code == 31066 || code == -9
 }
 
-// Mkdir — 创建远端目录；已存在(31061)视为成功。
+// Mkdir -- 创建远端目录；已存在(31061)视为成功。
 func (c *Client) Mkdir(p string) error {
 	perr := c.pcs.Mkdir(p)
 	if perr == nil {
@@ -253,7 +253,7 @@ func (c *Client) Mkdir(p string) error {
 	return perr
 }
 
-// FileInfo — 远端文件元信息（写回索引用）。
+// FileInfo -- 远端文件元信息（写回索引用）。
 type FileInfo struct {
 	FsID  int64
 	Path  string
@@ -263,7 +263,7 @@ type FileInfo struct {
 	Isdir bool
 }
 
-// DownloadAndHash — 下载远端文件并计算 md5（verify 校验的底层能力，design §5 verify）。
+// DownloadAndHash -- 下载远端文件并计算 md5（verify 校验的底层能力，design §5 verify）。
 //   - 先尝试一次性下载（整 Range，CDN 对小文件直接回 200/206）
 //   - 大文件整 Range 可能被拒（403 hitcode:104）→ 降级为 256KB 窗口逐段下载拼接哈希
 func (c *Client) DownloadAndHash(remotePath string, size int64) (string, int64, error) {
@@ -307,7 +307,7 @@ func (c *Client) DownloadAndHash(remotePath string, size int64) (string, int64, 
 	return hex.EncodeToString(h.Sum(nil)), total, nil
 }
 
-// streamRange — 请求 [from,to]（含端点）并写入 h，返回字节数。接受 200/206。
+// streamRange -- 请求 [from,to]（含端点）并写入 h，返回字节数。接受 200/206。
 func (c *Client) streamRange(link string, from, to, size int64, h hash.Hash) (int64, error) {
 	req, err := http.NewRequest(http.MethodGet, link, nil)
 	if err != nil {
@@ -341,7 +341,7 @@ func (c *Client) streamRange(link string, from, to, size int64, h hash.Hash) (in
 	}
 }
 
-// FixMD5 — 分片上传后服务端 md5 元数据可能与真实内容不一致（百度已知问题）。
+// FixMD5 -- 分片上传后服务端 md5 元数据可能与真实内容不一致（百度已知问题）。
 // fork 的做法：定位下载取真实内容头 → 与服务端存储对比 → 用秒传原理重写元数据。
 // 顺带构成一次轻量内容校验（design §5 verify 的雏形）。
 func (c *Client) FixMD5(remotePath string) error {
@@ -351,7 +351,7 @@ func (c *Client) FixMD5(remotePath string) error {
 	return nil
 }
 
-// Remove — 远端删除（目录为服务器端递归删除）。仅由历史清理使用；
+// Remove -- 远端删除（目录为服务器端递归删除）。仅由历史清理使用；
 // 正常的"删除传播"一律走 Move 归档，绝不直接删（design镜像）。
 func (c *Client) Remove(p string) error {
 	if perr := c.pcs.Remove(p); perr != nil {
@@ -360,7 +360,7 @@ func (c *Client) Remove(p string) error {
 	return nil
 }
 
-// List — 列出远端目录内容（看板/验证用）。
+// List -- 列出远端目录内容（看板/验证用）。
 func (c *Client) List(remotePath string) ([]FileInfo, error) {
 	fdl, perr := c.pcs.FilesDirectoriesList(remotePath, baidupcs.DefaultOrderOptions)
 	if perr != nil {
@@ -380,7 +380,7 @@ func (c *Client) List(remotePath string) ([]FileInfo, error) {
 	return out, nil
 }
 
-// IsEmpty — 远端目录是否为空（既无文件也无子目录）。
+// IsEmpty -- 远端目录是否为空（既无文件也无子目录）。
 // 用于归档后清理变空的目录（design §9.2「空目录移除」）。
 func (c *Client) IsEmpty(remotePath string) (bool, error) {
 	items, err := c.List(remotePath)
@@ -397,7 +397,7 @@ func (c *Client) IsEmpty(remotePath string) (bool, error) {
 	return true, nil
 }
 
-// Meta — 查询远端文件元信息。
+// Meta -- 查询远端文件元信息。
 func (c *Client) Meta(p string) (*FileInfo, error) {
 	fd, perr := c.pcs.FilesDirectoriesMeta(p)
 	if perr != nil {
@@ -413,7 +413,7 @@ func (c *Client) Meta(p string) (*FileInfo, error) {
 	}, nil
 }
 
-// AsPCSError — 从 error 取出 SDK 的 pcserror.Error（design §12：接口不是 error，需断言）。
+// AsPCSError -- 从 error 取出 SDK 的 pcserror.Error（design §12：接口不是 error，需断言）。
 func AsPCSError(err error) (pcserror.Error, bool) {
 	if err == nil {
 		return nil, false
@@ -422,7 +422,7 @@ func AsPCSError(err error) (pcserror.Error, bool) {
 	return pe, ok
 }
 
-// ParseCookies — "A=1; B=2" → []*http.Cookie。
+// ParseCookies -- "A=1; B=2" → []*http.Cookie。
 func ParseCookies(s string) []*http.Cookie {
 	var out []*http.Cookie
 	for _, part := range strings.Split(s, ";") {

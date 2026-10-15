@@ -4,10 +4,10 @@ package main
 
 import "runtime"
 
-// processMem — 非 Windows 平台暂不采集（Linux 版后续读 /proc/self/status）。
+// processMem -- 非 Windows 平台暂不采集（Linux 版后续读 /proc/self/status）。
 func processMem() (rss, peakRss int64, ok bool) { return 0, 0, false }
 
-// runtimeMem — GC 后的 Go 运行时内存分解。
+// runtimeMem -- GC 后的 Go 运行时内存分解。
 type runtimeMem struct {
 	HeapAlloc    int64
 	HeapSys      int64
@@ -29,5 +29,5 @@ func sampleMem() runtimeMem {
 	}
 }
 
-// liveHeap — GC 后存活堆。
+// liveHeap -- GC 后存活堆。
 func liveHeap() int64 { return sampleMem().HeapAlloc }

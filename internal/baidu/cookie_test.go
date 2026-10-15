@@ -14,7 +14,7 @@ func TestSanitizeCookie(t *testing.T) {
 	if got := SanitizeCookie("BAIDUID=x; junk; BDUSS=y"); got != "BAIDUID=x; BDUSS=y" {
 		t.Fatalf("顺序/过滤不符: %q", got)
 	}
-	// 无用项里带非法字节的（百度 RT 的值是 "…"）必须整项丢掉
+	// 无用项里带非法字节的（百度 RT 的值是 "..."）必须整项丢掉
 	if got := SanitizeCookie(`BDUSS=a; RT="deadbeef"`); got != "BDUSS=a" {
 		t.Fatalf("RT 该被丢弃: %q", got)
 	}

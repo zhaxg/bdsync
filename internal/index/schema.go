@@ -1,4 +1,4 @@
-// Package index — SQLite 持久索引与队列（design.md §5）。
+// Package index -- SQLite 持久索引与队列（design.md §5）。
 // 崩溃安全边界：Detector 写完即持久化（P3）。
 package index
 
@@ -44,7 +44,7 @@ func StateName(s int) string {
 	}
 }
 
-// SchemaVersion — sync_pair.schema_ver。
+// SchemaVersion -- sync_pair.schema_ver。
 const SchemaVersion = 1
 
 // ddl 逐条执行（IF NOT EXISTS，可重复初始化）。

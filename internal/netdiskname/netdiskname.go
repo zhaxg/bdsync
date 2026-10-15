@@ -1,4 +1,4 @@
-// Package netdiskname — 网盘文件名校验规则（design §10）。
+// Package netdiskname -- 网盘文件名校验规则（design §10）。
 //
 // 关键点：校验的是**网盘的规则**，不是本地文件系统的规则。
 // Linux 本地允许的字符比 Windows 多，但目标是百度网盘，两边必须共用同一份规则表，
@@ -17,7 +17,7 @@ import (
 const illegalChars = `:*?"<>|\`
 
 // 保留设备名（Windows 保留名，网盘同样不接受）。
-// 含 COM¹²³ 等上标数字变体（design §10：COM¹²³ 上标变体）。
+// 含 COM^1^2^3 等上标数字变体（design §10：COM^1^2^3 上标变体）。
 var reservedBase = map[string]bool{
 	"con": true, "prn": true, "aux": true, "nul": true,
 	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
@@ -26,13 +26,17 @@ var reservedBase = map[string]bool{
 	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
 }
 
-// 上标数字 → 归一化（COM¹²³ 等变体，design §10）
+// 上标数字 → 归一化（COM123 等变体，design §10）
+//
+// 必须用码点写法而非字面量：这些字符是本表要**识别并消除**的目标，
+// 不是输出字符。写成 '1' 字面量，在任何一次编码转换/批量替换中
+// 都可能被顺手改掉，表就废了 —— 且编译能过、行为静默错误，最难查。
 var superscriptDigits = map[rune]rune{
-	'¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5',
-	'⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁰': '0',
+	0x00B9: '1', 0x00B2: '2', 0x00B3: '3', 0x2074: '4', 0x2075: '5',
+	0x2076: '6', 0x2077: '7', 0x2078: '8', 0x2079: '9', 0x2070: '0',
 }
 
-// Validate — 校验相对路径的每个组件。返回 nil = 网盘可接受。
+// Validate -- 校验相对路径的每个组件。返回 nil = 网盘可接受。
 func Validate(relPath string) error {
 	if relPath == "" || relPath == "." {
 		return nil
@@ -45,7 +49,7 @@ func Validate(relPath string) error {
 	return nil
 }
 
-// Component — 校验单个路径组件。
+// Component -- 校验单个路径组件。
 func Component(name string) error {
 	if name == "" {
 		return fmt.Errorf("空文件名组件")
@@ -54,7 +58,7 @@ func Component(name string) error {
 		return fmt.Errorf("含网盘非法字符 %q（组件 %q）", string(name[i]), name)
 	}
 	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
-		return fmt.Errorf("结尾不能是点或空格（组件 %q）——外部归档解压常见", name)
+		return fmt.Errorf("结尾不能是点或空格（组件 %q）----外部归档解压常见", name)
 	}
 	if strings.HasPrefix(name, " ") {
 		return fmt.Errorf("开头不能是空格（组件 %q）", name)
@@ -82,10 +86,10 @@ func normalizeReserved(s string) string {
 	return strings.ToLower(b.String())
 }
 
-// ErrPrefix — 扫描入库时写入 last_err 的前缀（ClaimBatch 用它过滤，见 store.go）。
+// ErrPrefix -- 扫描入库时写入 last_err 的前缀（ClaimBatch 用它过滤，见 store.go）。
 const ErrPrefix = "非法文件名: "
 
-// Marked — 判断 last_err 是否为本包产生的拦截记录。
+// Marked -- 判断 last_err 是否为本包产生的拦截记录。
 func Marked(lastErr string) bool {
 	return strings.HasPrefix(lastErr, ErrPrefix)
 }

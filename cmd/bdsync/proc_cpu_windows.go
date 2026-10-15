@@ -10,7 +10,7 @@ import (
 
 var procGetProcessTimes = syscall.NewLazyDLL("kernel32.dll").NewProc("GetProcessTimes")
 
-// processCPUTime — 当前进程累计 CPU 时间（kernel + user）。
+// processCPUTime -- 当前进程累计 CPU 时间（kernel + user）。
 // GetCurrentProcess() 伪句柄 = ^uintptr(0)。
 func processCPUTime() (time.Duration, bool) {
 	const pseudoHandle = ^uintptr(0)
@@ -28,7 +28,7 @@ func processCPUTime() (time.Duration, bool) {
 	return filetimeDur(kernel) + filetimeDur(user), true
 }
 
-// filetimeDur — FILETIME(100ns 单位) → time.Duration。
+// filetimeDur -- FILETIME(100ns 单位) → time.Duration。
 func filetimeDur(ft syscall.Filetime) time.Duration {
 	ticks := int64(ft.HighDateTime)<<32 | int64(ft.LowDateTime)
 	return time.Duration(ticks * 100)

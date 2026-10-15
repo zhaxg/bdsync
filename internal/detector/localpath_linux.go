@@ -43,10 +43,10 @@ func ValidateLocalRoot(root string) error {
 
 	st, err := os.Stat(abs) // 只读操作
 	if err != nil {
-		return fmt.Errorf("✗ 根目录不可访问：%s\n  %v", abs, err)
+		return fmt.Errorf("[X] 根目录不可访问：%s\n  %v", abs, err)
 	}
 	if !st.IsDir() {
-		return fmt.Errorf("✗ 根目录不是目录：%s", abs)
+		return fmt.Errorf("[X] 根目录不是目录：%s", abs)
 	}
 
 	mounts, err := loadMounts()
@@ -67,7 +67,7 @@ func ValidateLocalRoot(root string) error {
 		}
 	}
 	if best != nil && remoteFSTypes[best.fstype] {
-		return fmt.Errorf("✗ 不支持网络/远程文件系统挂载：%s\n"+
+		return fmt.Errorf("[X] 不支持网络/远程文件系统挂载：%s\n"+
 			"  %s 位于 %s（fstype=%s）。本工具仅支持本地文件系统，\n"+
 			"  原因：远程挂载上文件变动无法可靠检测，可能导致备份静默遗漏文件。\n"+
 			"  如需备份 NAS 数据，请先将数据同步到本地磁盘再使用本工具。",
@@ -76,7 +76,7 @@ func ValidateLocalRoot(root string) error {
 	return nil
 }
 
-// pathWithin — p 是否位于 dir 之下（含 dir 本身），按路径分量判断。
+// pathWithin -- p 是否位于 dir 之下（含 dir 本身），按路径分量判断。
 func pathWithin(p, dir string) bool {
 	if dir == "/" {
 		return strings.HasPrefix(p, "/")
@@ -153,8 +153,8 @@ func unescapeMountPath(s string) string {
 	return b.String()
 }
 
-// dirFileRef — Linux 无 USN 等价物（design §4.10），恒失败（poll 不依赖它）。
+// dirFileRef -- Linux 无 USN 等价物（design §4.10），恒失败（poll 不依赖它）。
 func dirFileRef(string) (uint64, bool) { return 0, false }
 
-// IsNTFS — 非 Windows 恒 false（usn 后端仅 Windows）。
+// IsNTFS -- 非 Windows 恒 false（usn 后端仅 Windows）。
 func IsNTFS(string) bool { return false }

@@ -7,7 +7,7 @@ import (
 	"errors"
 )
 
-// Kind — 变更类型（Backend 事件用）。
+// Kind -- 变更类型（Backend 事件用）。
 type Kind uint8
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 // Event 是后端向上层投递的「这个路径值得看一眼」的提示。
-// 硬规矩②：判定逻辑永远读索引，不读事件流 —— 事件只是性能优化。
+// 硬规矩2)：判定逻辑永远读索引，不读事件流 ---- 事件只是性能优化。
 type Event struct {
 	Kind    Kind
 	Path    string // 相对 root，统一 '/'
@@ -32,7 +32,7 @@ type Stats struct {
 	LastError string `json:"last_error,omitempty"`
 }
 
-// ErrNotImplemented — Phase 1 占位。
+// ErrNotImplemented -- Phase 1 占位。
 var ErrNotImplemented = errors.New("detector: 该功能尚未实现")
 
 // Backend 对应 design.md §4.9 的检测后端接口。
@@ -49,7 +49,7 @@ type Backend interface {
 	// Events 返回变更流。poll 后端由定时器驱动，返回 nil channel。
 	Events() <-chan Event
 
-	// SelfTest 写探测文件并确认收到事件 —— 防「调用成功但从不通知」的唯一手段。
+	// SelfTest 写探测文件并确认收到事件 ---- 防「调用成功但从不通知」的唯一手段。
 	SelfTest(ctx context.Context, root string) error
 
 	// Stats 后端健康指标。

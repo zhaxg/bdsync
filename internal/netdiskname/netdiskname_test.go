@@ -3,10 +3,17 @@ package netdiskname
 import "testing"
 
 func TestValidate(t *testing.T) {
+	// 注意：这两个是**被测输入**（netdiskname 要能接受 emoji；要能识别上标保留名变体），
+	// 所以用码点转义写，不写字面量 —— 任何批量字符替换都会误伤它们，
+	// 而那时编译照过、测试语义静默改变，最难查。
+	const (
+		emojiFile      = "emoji\U0001F389.bin"
+		lptSuperscript = "LPT\u00B3\u2074"
+	)
 	valid := []string{
-		"", ".", "a.txt", "中文文件.txt", "emoji🎉.bin", "space in name.txt",
+		"", ".", "a.txt", "中文文件.txt", emojiFile, "space in name.txt",
 		"archive.tar.gz", ".hidden", "COM10.txt", "COM1x.txt", "lpt0.dat",
-		"a/b/c.txt", "CONSOLES.txt", "COM123", "LPT³⁴",
+		"a/b/c.txt", "CONSOLES.txt", "COM123", lptSuperscript,
 	}
 	for _, p := range valid {
 		if err := Validate(p); err != nil {
@@ -34,8 +41,11 @@ func TestValidate(t *testing.T) {
 		{"nul.txt.bak", "保留名（首点前基名，与 Windows RtlIsDosDeviceName 一致）"},
 		{"com1.dat", "保留名"},
 		{"LPT9", "保留名"},
-		{"COM¹", "上标变体保留名（COM¹ → com1）"},
-		{"lpt³.txt", "上标变体保留名（lpt³ → lpt3）"},
+		// 上标数字用码点转义：它们是**被测输入**（网盘保留名的变体），
+		// 不是输出字符。写成字面量会被任何批量字符替换误伤，届时编译能过、
+		// 测试语义静默改变，最难查。
+		{"COM\u00B9", "上标变体保留名（COM\u00B9 → com1）"},
+		{"lpt\u00B3.txt", "上标变体保留名（lpt\u00B3 → lpt3）"},
 		{"sub/COM2.txt", "子目录保留名"},
 	}
 	for _, c := range invalid {

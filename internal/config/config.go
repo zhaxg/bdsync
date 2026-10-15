@@ -1,7 +1,7 @@
-// Package config — YAML 配置（design §14）。
+// Package config -- YAML 配置（design §14）。
 //
 // 优先级：命令行 flag > 配置文件 > 默认值。
-// 安全约束：凭据（BDUSS/STOKEN）**绝不进配置文件**——防止凭据随配置文件被拷走/提交。
+// 安全约束：凭据（BDUSS/STOKEN）**绝不进配置文件**----防止凭据随配置文件被拷走/提交。
 // 来源优先级：环境变量 > 二进制同目录 credentials.dat（明文）> 看板录入
 package config
 
@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Duration — 支持 "5m"、"10s"、"24h" 的时长。
+// Duration -- 支持 "5m"、"10s"、"24h" 的时长。
 type Duration struct{ d int64 } // 纳秒
 
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
@@ -40,19 +40,19 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 
 func (d Duration) MarshalYAML() (any, error) { return formatDuration(d.d), nil }
 
-// Seconds — 时长（秒）。
+// Seconds -- 时长（秒）。
 func (d Duration) Seconds() float64 { return float64(d.d) / 1e9 }
 
-// Nanos — 时长（纳秒）。
+// Nanos -- 时长（纳秒）。
 func (d Duration) Nanos() int64 { return d.d }
 
-// String — "5m" 形式（表单回显 / banner 展示）。
+// String -- "5m" 形式（表单回显 / banner 展示）。
 func (d Duration) String() string { return formatDuration(d.d) }
 
-// DurationOf — time.Duration → 配置时长。
+// DurationOf -- time.Duration → 配置时长。
 func DurationOf(v time.Duration) Duration { return Duration{d: int64(v)} }
 
-// Clone — 深拷贝（含 Exclude 切片；其余均为值类型）。
+// Clone -- 深拷贝（含 Exclude 切片；其余均为值类型）。
 func Clone(c *Config) *Config {
 	if c == nil {
 		return nil
@@ -62,7 +62,7 @@ func Clone(c *Config) *Config {
 	return &out
 }
 
-// ApplyMap — 将嵌套 settings 映射合并进已有配置（YAML 语义：只覆盖出现的键）。
+// ApplyMap -- 将嵌套 settings 映射合并进已有配置（YAML 语义：只覆盖出现的键）。
 func ApplyMap(cfg *Config, m map[string]any) error {
 	b, err := yaml.Marshal(m)
 	if err != nil {
@@ -71,7 +71,7 @@ func ApplyMap(cfg *Config, m map[string]any) error {
 	return yaml.Unmarshal(b, cfg)
 }
 
-// ByteSize — 支持 "2GB"、"512MB"、"1048576" 的字节数。
+// ByteSize -- 支持 "2GB"、"512MB"、"1048576" 的字节数。
 type ByteSize int64
 
 func (b *ByteSize) UnmarshalYAML(node *yaml.Node) error {
@@ -92,7 +92,7 @@ func (b *ByteSize) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Int64 — 字节数值。
+// Int64 -- 字节数值。
 func (b ByteSize) Int64() int64 { return int64(b) }
 
 func parseDuration(s string) (int64, error) {
@@ -126,7 +126,9 @@ func parseDuration(s string) (int64, error) {
 		switch unit {
 		case "ns":
 			total += n
-		case "us", "µs":
+		// "us" 有两种写法：U+00B5 MICRO SIGN 与 U+03BC GREEK SMALL LETTER MU，
+		// 肉眼完全一样但字节不同。都用码点写，避免编辑器/编码环节把它们合并成一个。
+		case "\u00B5s", "\u03BCs":
 			total += n * 1_000
 		case "ms":
 			total += n * 1_000_000
@@ -156,7 +158,7 @@ func formatDuration(ns int64) string {
 	return fmt.Sprintf("%dms", ns/1_000_000)
 }
 
-// ParseByteSize — "512MB" / "2GB" / "1048576"。
+// ParseByteSize -- "512MB" / "2GB" / "1048576"。
 func ParseByteSize(s string) (int64, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	mult := int64(1)
@@ -180,9 +182,9 @@ func ParseByteSize(s string) (int64, error) {
 	return int64(n * float64(mult)), nil
 }
 
-// Config — 顶层配置（字段对齐 design §14；未实现的项有意省略而非留空占位）。
+// Config -- 顶层配置（字段对齐 design §14；未实现的项有意省略而非留空占位）。
 type Config struct {
-	Pair     PairConfig     `yaml:"pair"` // ★ 必填：本地根目录 ↔ 远端网盘目录
+	Pair     PairConfig     `yaml:"pair"` // * 必填：本地根目录 <-> 远端网盘目录
 	Detector DetectorConfig `yaml:"detector"`
 	Sender   SenderConfig   `yaml:"sender"`
 	Quota    QuotaConfig    `yaml:"quota"`
@@ -193,7 +195,7 @@ type Config struct {
 	Web      WebConfig      `yaml:"web"`
 }
 
-// MirrorConfig — 镜像模式（folderRA ≡ folderLA + 远端历史）。
+// MirrorConfig -- 镜像模式（folderRA == folderLA + 远端历史）。
 //
 // 语义：主树**路径清单**永远等于本地清单；所有会被镜像操作销毁的远端旧版本
 // 先归档进 history_dir（服务器端 Move，零带宽），到期整目录清理。
@@ -225,7 +227,7 @@ type SenderConfig struct {
 
 type QuotaConfig struct {
 	IdleThreshold Duration `yaml:"idle_threshold"`
-	// HistoryDays — 远端历史保留天数。**权威副本在 Mirror.HistoryDays**；
+	// HistoryDays -- 远端历史保留天数。**权威副本在 Mirror.HistoryDays**；
 	// 这里只是让它能写在 idle_threshold 旁边（都是"多久"类旋钮，挤在一起更好找）。
 	// yaml 非 strict：写在 quota 下也能解析进来，normalizeHistoryDays() 会把它同步回 Mirror。
 	HistoryDays  int `yaml:"history_days"`
@@ -233,22 +235,22 @@ type QuotaConfig struct {
 	ActiveCPUCap int `yaml:"active_cpu_cap"` // %
 }
 
-// normalizeHistoryDays — 抹平 history_days 的两个位置。
+// normalizeHistoryDays -- 抹平 history_days 的两个位置。
 //
 // 为什么需要：yaml.v3 默认非 strict，写在 quota: 下的 history_days 若不显式接收会被
-// **静默丢弃**（不报错、不生效）——用户以为改了其实没改。这里让两处都能写，
+// **静默丢弃**（不报错、不生效）----用户以为改了其实没改。这里让两处都能写，
 // 且以 Mirror.HistoryDays 为准（它是真正的消费者，PruneHistory 读的就是它）。
-// defaultHistoryDays — Default() 预填的保留期。
+// defaultHistoryDays -- Default() 预填的保留期。
 //
 // 单独留一个常量，是因为 normalizeHistoryDays 靠它区分
-// 「用户在 mirror: 下显式写了 90」和「用户没写、用的是默认值 90」——
+// 「用户在 mirror: 下显式写了 90」和「用户没写、用的是默认值 90」----
 // 两者数值相同却是不同的意图，不区分就没法定优先级。
 const defaultHistoryDays = 90
 
 func (c *Config) normalizeHistoryDays() {
 	// Mirror 是权威副本（PruneHistory 读的就是它）。但 Default() 预填了
 	// defaultHistoryDays，所以「Mirror 仍是默认值」实际含义是「用户没在 mirror 下写过」。
-	// 优先级：Mirror 显式写过（≠默认值或 ≠0）→ 用它；否则退到 Quota；再否则保持默认。
+	// 优先级：Mirror 显式写过（!=默认值或 !=0）→ 用它；否则退到 Quota；再否则保持默认。
 	switch {
 	case c.Mirror.HistoryDays != defaultHistoryDays && c.Mirror.HistoryDays > 0:
 		// Mirror 显式设置过 → 保持权威
@@ -263,7 +265,7 @@ type PolicyConfig struct {
 	RapidUpload     bool `yaml:"rapid_upload"`
 }
 
-// PairConfig — 备份对（**必填**）：本地只读根目录 ↔ 远端网盘目录。
+// PairConfig -- 备份对（**必填**）：本地只读根目录 <-> 远端网盘目录。
 // 刻意不进 flag、不给默认值：备份目标必须是显式声明的事实，
 // 缺任何一项 → 启动即拒绝（避免把 83 GB 传到猜错的地方）。
 type PairConfig struct {
@@ -276,21 +278,21 @@ type ServiceConfig struct {
 	LogFile  string `yaml:"log_file"`
 	LogMaxMB int    `yaml:"log_max_mb"`
 	LogKeep  int    `yaml:"log_keep"`
-	// Initialized — 首次配置完成标记（向导保存时置 true）。
+	// Initialized -- 首次配置完成标记（向导保存时置 true）。
 	//
 	// 有它：双击直接进服务态，凭据过期时进控制台用「凭据」卡片修复，不再走一遍向导。
 	// 没它（老配置）：只要配置文件存在且 pair 齐全，也按已初始化处理。
-	// 语义只问"填过没有"，不问"能不能跑起来"——后者由运行时把错误显示在看板上。
+	// 语义只问"填过没有"，不问"能不能跑起来"----后者由运行时把错误显示在看板上。
 	Initialized bool `yaml:"initialized"`
 }
 
-// WebConfig — 看板（design §13：SSE、127.0.0.1、默认关闭、1Hz 上限）。
+// WebConfig -- 看板（design §13：SSE、127.0.0.1、默认关闭、1Hz 上限）。
 type WebConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Addr    string `yaml:"addr"` // 必须是回环地址（Validate 强制）
 }
 
-// Default — design §14 的默认值。
+// Default -- design §14 的默认值。
 func Default() *Config {
 	return &Config{
 		Detector: DetectorConfig{
@@ -338,7 +340,7 @@ func Default() *Config {
 	}
 }
 
-// Load — 读取 YAML 配置；path 为空返回默认值。
+// Load -- 读取 YAML 配置；path 为空返回默认值。
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	if path == "" {
@@ -352,7 +354,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("解析配置 %s 失败: %w", path, err)
 	}
 	cfg.normalizeHistoryDays()
-	// 相对路径以**配置文件所在目录**为基准（不是 CWD）——
+	// 相对路径以**配置文件所在目录**为基准（不是 CWD）----
 	// 这样"exe + bdsync.yaml + var/"整个文件夹可以放任意位置、从任意目录启动。
 	resolveAgainst(filepath.Dir(path), cfg)
 	if err := cfg.Validate(); err != nil {
@@ -361,7 +363,7 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// resolveAgainst — 把配置里的相对路径锚定到 baseDir（配置文件所在目录）。
+// resolveAgainst -- 把配置里的相对路径锚定到 baseDir（配置文件所在目录）。
 // 绝对路径原样保留；空值保持空（未配置日志文件 = 只打 stdout）。
 func resolveAgainst(baseDir string, cfg *Config) {
 	fix := func(p *string) {
@@ -375,13 +377,13 @@ func resolveAgainst(baseDir string, cfg *Config) {
 	fix(&cfg.Service.LogFile)
 	fix(&cfg.Pair.LocalRoot) // 本地根目录也允许相对配置写（如 ../资料）
 	if l := strings.TrimSpace(cfg.Pair.LocalRoot); l != "" {
-		// 规范化：D:/x ≡ D:\x（后续所有比较都不再受书写风格影响）
+		// 规范化：D:/x == D:\x（后续所有比较都不再受书写风格影响）
 		cfg.Pair.LocalRoot = filepath.Clean(l)
 	}
 	cfg.Pair.Remote = strings.TrimSpace(cfg.Pair.Remote)
 }
 
-// ValidatePair — 备份对必须显式声明（配置驱动的核心约束）。
+// ValidatePair -- 备份对必须显式声明（配置驱动的核心约束）。
 // 缺任一项都在启动阶段拦下：备份目标不能靠猜。
 func (c *Config) ValidatePair() error {
 	var missing []string
@@ -393,7 +395,7 @@ func (c *Config) ValidatePair() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("配置缺少必填项：%s\n"+
-			"  备份对必须显式声明 —— bdsync 拒绝在目标不明时启动。\n"+
+			"  备份对必须显式声明 ---- bdsync 拒绝在目标不明时启动。\n"+
 			"  示例：\n"+
 			"    pair:\n"+
 			"      local_root: \"D:/YourData\"         # 本地根目录（严格只读）\n"+
@@ -406,7 +408,7 @@ func (c *Config) ValidatePair() error {
 	return nil
 }
 
-// Validate — 语义校验（把"改了会出事"的配置在启动时拦住）。
+// Validate -- 语义校验（把"改了会出事"的配置在启动时拦住）。
 func (c *Config) Validate() error {
 	if c.Policy.PropagateDelete {
 		return fmt.Errorf("policy.propagate_delete 必须为 false：这是备份工具，" +
@@ -447,7 +449,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateLoopbackAddr — addr 必须是 127.0.0.1/localhost/::1。
+// validateLoopbackAddr -- addr 必须是 127.0.0.1/localhost/::1。
 func validateLoopbackAddr(addr string) error {
 	host := addr
 	if i := strings.LastIndex(addr, ":"); i >= 0 {
@@ -466,7 +468,7 @@ func validateLoopbackAddr(addr string) error {
 	return fmt.Errorf("web.addr 必须是回环地址（design §13 只监听 127.0.0.1），得到 %q", addr)
 }
 
-// Parse — 解析 YAML 字节（Web 配置保存接口用；含校验）。
+// Parse -- 解析 YAML 字节（Web 配置保存接口用；含校验）。
 func Parse(data []byte) (*Config, error) {
 	cfg := Default()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
@@ -479,7 +481,7 @@ func Parse(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-// FindDefault — 未显式指定 --config 时的探测顺序（先到先得）：
+// FindDefault -- 未显式指定 --config 时的探测顺序（先到先得）：
 //
 //  1. <exe 所在目录>/bdsync.yaml   ← 便携式：配置与二进制同目录，放哪都能跑
 //  2. ./bdsync.yaml                ← 开发态：在仓库根目录直接跑

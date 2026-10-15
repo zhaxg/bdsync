@@ -36,13 +36,13 @@ func ValidateLocalRoot(root string) error {
 	// UNC 路径（\\NAS\share）与 \\?\UNC\ 一律拒绝
 	p := strings.TrimPrefix(abs, `\\?\`)
 	if strings.HasPrefix(p, `\\`) {
-		return fmt.Errorf("✗ 不支持网络路径：%s\n"+
+		return fmt.Errorf("[X] 不支持网络路径：%s\n"+
 			"  本工具仅支持本地固定磁盘。原因：网络盘上文件变动无法可靠检测，\n"+
 			"  可能导致备份静默遗漏文件。\n"+
 			"  如需备份 NAS 数据，请先将数据同步到本地磁盘再使用本工具。", abs)
 	}
 	if len(p) < 3 || p[1] != ':' || (p[2] != '\\' && p[2] != '/') {
-		return fmt.Errorf("✗ 不支持的路径形式（需要盘符路径，如 D:\\BackupRoot）：%s", abs)
+		return fmt.Errorf("[X] 不支持的路径形式（需要盘符路径，如 D:\\BackupRoot）：%s", abs)
 	}
 
 	// GetDriveTypeW 需要 "D:\" 形式的卷根
@@ -56,30 +56,30 @@ func ValidateLocalRoot(root string) error {
 	case driveFixed:
 		// 唯一接受的类型
 	case driveRemote:
-		return fmt.Errorf("✗ 不支持网络盘/网络共享：%s\n"+
+		return fmt.Errorf("[X] 不支持网络盘/网络共享：%s\n"+
 			"  本工具仅支持本地固定磁盘。原因：网络盘上文件变动无法可靠检测，\n"+
 			"  可能导致备份静默遗漏文件。\n"+
 			"  如需备份 NAS 数据，请先将数据同步到本地磁盘再使用本工具。", abs)
 	case driveRemovable:
-		return fmt.Errorf("✗ 不支持可移动磁盘：%s\n"+
+		return fmt.Errorf("[X] 不支持可移动磁盘：%s\n"+
 			"  U 盘/移动硬盘可能随时被拔出，且不保证是 NTFS，变更检测不可靠。\n"+
 			"  请将数据复制到本地固定磁盘后再备份。", abs)
 	default:
-		return fmt.Errorf("✗ 非本地固定磁盘（DriveType=%d）：%s\n"+
+		return fmt.Errorf("[X] 非本地固定磁盘（DriveType=%d）：%s\n"+
 			"  仅接受本地固定磁盘（DRIVE_FIXED）。", dt, abs)
 	}
 
 	st, err := os.Stat(abs) // 只读操作
 	if err != nil {
-		return fmt.Errorf("✗ 根目录不可访问：%s\n  %v", abs, err)
+		return fmt.Errorf("[X] 根目录不可访问：%s\n  %v", abs, err)
 	}
 	if !st.IsDir() {
-		return fmt.Errorf("✗ 根目录不是目录：%s", abs)
+		return fmt.Errorf("[X] 根目录不是目录：%s", abs)
 	}
 	return nil
 }
 
-// dirFileRef — 取目录的 NTFS FileReferenceNumber（usn 模式路径解析用，design §4.2c）。
+// dirFileRef -- 取目录的 NTFS FileReferenceNumber（usn 模式路径解析用，design §4.2c）。
 // 只读属性即可，无需 SeManageVolumePrivilege。
 func dirFileRef(path string) (uint64, bool) {
 	p, err := syscall.UTF16PtrFromString(path)
@@ -103,7 +103,7 @@ func dirFileRef(path string) (uint64, bool) {
 	return ref, ref != 0
 }
 
-// IsNTFS — 根目录所在卷是否 NTFS（usn 后端的前提）。
+// IsNTFS -- 根目录所在卷是否 NTFS（usn 后端的前提）。
 func IsNTFS(root string) bool {
 	abs, err := filepath.Abs(root)
 	if err != nil {

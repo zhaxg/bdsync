@@ -1,4 +1,4 @@
-// Package sender — 上传发送端（design §7/§9/§12）。
+// Package sender -- 上传发送端（design §7/§9/§12）。
 //
 // 单文件流程（Phase 1 实测通过）：
 //
@@ -39,10 +39,10 @@ import (
 	"bdsync/internal/index"
 )
 
-// defaultContentSize — 秒传V2 的防伪切片长度（上游 DefaultContentSize = 4KB）。
+// defaultContentSize -- 秒传V2 的防伪切片长度（上游 DefaultContentSize = 4KB）。
 const defaultContentSize = 4 * 1024
 
-// BlockSize — 分块大小（上游 getBlockSize 阈值：<8GB→4MB，≥8GB→16MB，≥32GB→64MB）。
+// BlockSize -- 分块大小（上游 getBlockSize 阈值：<8GB→4MB，>=8GB→16MB，>=32GB→64MB）。
 func BlockSize(fileSize int64) int64 {
 	switch {
 	case fileSize >= baidupcs.MaxUploadThreshold:
@@ -54,7 +54,7 @@ func BlockSize(fileSize int64) int64 {
 	}
 }
 
-// Action — 错误分类结果（design §12）。
+// Action -- 错误分类结果（design §12）。
 type Action int
 
 const (
@@ -65,13 +65,13 @@ const (
 	ActionDeferred               // 稳定性闸门推迟（不算失败）
 )
 
-// isRateLimited — 远端「请求过于频繁」（errno 6）。
+// isRateLimited -- 远端「请求过于频繁」（errno 6）。
 func isRateLimited(err error) bool {
 	pe, ok := baidu.AsPCSError(err)
 	return ok && pe.GetErrType() == pcserror.ErrTypeRemoteError && pe.GetRemoteErrCode() == 6
 }
 
-// Classify — 把 SDK 错误映射为处理动作（design §12 错误分类表 + fork 实际错误码）。
+// Classify -- 把 SDK 错误映射为处理动作（design §12 错误分类表 + fork 实际错误码）。
 func Classify(err error) Action {
 	if err == nil {
 		return ActionDone
@@ -112,7 +112,7 @@ func Classify(err error) Action {
 	}
 }
 
-// Stats — 一次 Drain 的统计（并发安全）。
+// Stats -- 一次 Drain 的统计（并发安全）。
 type Stats struct {
 	mu         sync.Mutex
 	Claimed    int
@@ -135,7 +135,7 @@ func (s *Stats) apply(f func(*Stats)) {
 	s.mu.Unlock()
 }
 
-// Snapshot — 取一份无锁快照（逐字段拷贝，避免复制 mutex）。
+// Snapshot -- 取一份无锁快照（逐字段拷贝，避免复制 mutex）。
 func (s *Stats) Snapshot() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,7 +155,7 @@ func (s *Stats) Snapshot() Stats {
 	}
 }
 
-// Sender — 上传器（Phase 3 并发；参数支持看板在线调整）。
+// Sender -- 上传器（Phase 3 并发；参数支持看板在线调整）。
 type Sender struct {
 	st           *index.Store
 	bc           *baidu.Client
@@ -179,7 +179,7 @@ type Sender struct {
 	onRename    string // mv（默认）| history（降级：归档+重传）
 }
 
-// Options — Sender 参数。
+// Options -- Sender 参数。
 type Options struct {
 	LocalRoot   string
 	RemoteRoot  string
@@ -194,7 +194,7 @@ type Options struct {
 	Logf        func(format string, args ...any)
 }
 
-// New — 构造 Sender。
+// New -- 构造 Sender。
 func New(st *index.Store, bc *baidu.Client, opts Options) *Sender {
 	if opts.Policy == "" {
 		opts.Policy = baidu.PolicyOverwrite
@@ -229,7 +229,7 @@ func New(st *index.Store, bc *baidu.Client, opts Options) *Sender {
 	}
 }
 
-// SetLive — 看板在线调整：settle / 并发上限 / 同名策略（design §13 基本配置）。
+// SetLive -- 看板在线调整：settle / 并发上限 / 同名策略（design §13 基本配置）。
 func (s *Sender) SetLive(settle time.Duration, concurrency int, policy string) {
 	if settle > 0 {
 		s.prmu.Lock()
@@ -259,8 +259,8 @@ func (s *Sender) getPolicy() string {
 	return s.policyS
 }
 
-// Drain — 领取并上传 pending 文件，直到队列排空或达到 maxFiles（0=不限）。
-// 并发模型：每轮领取 ≤ 2×并发额度，worker 池处理（design §7 + Phase 3）。
+// Drain -- 领取并上传 pending 文件，直到队列排空或达到 maxFiles（0=不限）。
+// 并发模型：每轮领取 <= 2x并发额度，worker 池处理（design §7 + Phase 3）。
 func (s *Sender) Drain(ctx context.Context, maxFiles int) (*Stats, error) {
 	start := time.Now()
 	stats := &Stats{}
@@ -390,13 +390,13 @@ func (s *Sender) Drain(ctx context.Context, maxFiles int) (*Stats, error) {
 	return stats.Result(), nil
 }
 
-// Result — 结束时取快照（供调用方持有的最终统计）。
+// Result -- 结束时取快照（供调用方持有的最终统计）。
 func (s *Stats) Result() *Stats {
 	out := s.Snapshot()
 	return &out
 }
 
-// ensureDirs — 为批次内文件创建远端父目录（深度排序，父先于子）。串行调用。
+// ensureDirs -- 为批次内文件创建远端父目录（深度排序，父先于子）。串行调用。
 func (s *Sender) ensureDirs(ctx context.Context, batch []index.PendingEntry) error {
 	s.remoteDirsMu.Lock()
 	defer s.remoteDirsMu.Unlock()
@@ -427,7 +427,7 @@ func (s *Sender) ensureDirs(ctx context.Context, batch []index.PendingEntry) err
 	return nil
 }
 
-// historySrcRel — 归档源路径：改名后又删除的行，远端副本还在改名前的位置。
+// historySrcRel -- 归档源路径：改名后又删除的行，远端副本还在改名前的位置。
 func historySrcRel(it index.HistoryItem) string {
 	if it.OldPath != "" && it.OldPath != it.RelPath {
 		return it.OldPath
@@ -435,13 +435,13 @@ func historySrcRel(it index.HistoryItem) string {
 	return it.RelPath
 }
 
-// drainHistory — 归档队列排空（串行阶段；限流走 AIMD 钩子）。
+// drainHistory -- 归档队列排空（串行阶段；限流走 AIMD 钩子）。
 // 注意：归档失败**不改行状态**（保持 REMOVED_LOCAL + r_fsid，下轮自动重领），
-// 也绝不 FailUpload —— 那会把"本地已删"翻成 ERROR 并被当成待传文件重传。
+// 也绝不 FailUpload ---- 那会把"本地已删"翻成 ERROR 并被当成待传文件重传。
 func (s *Sender) drainHistory(ctx context.Context, stats *Stats) error {
 	// 归档后变空的父目录；函数退出时统一清理（defer 覆盖下面所有 return 分支）。
 	// 顺序很关键：drainHistory 在上传阶段之前跑完，空目录清掉后若仍有文件要传，
-	// ensureDirs 会按需重建 —— 所以放在 defer 里而不是归档完立刻清是对的。
+	// ensureDirs 会按需重建 ---- 所以放在 defer 里而不是归档完立刻清是对的。
 	emptied := map[string]bool{}
 	defer func() {
 		if n := s.pruneEmptyDirs(ctx, emptied); n > 0 {
@@ -483,7 +483,7 @@ func (s *Sender) drainHistory(ctx context.Context, stats *Stats) error {
 					return err // 记账失败：下轮幂等重放（目标已存在 → 补账）
 				}
 				stats.apply(func(st *Stats) { st.Archived++ })
-				s.logf("[·] %s → .history/%s/", it.RelPath, historyDateBucket())
+				s.logf("[-] %s → .history/%s/", it.RelPath, historyDateBucket())
 				// 记下父目录：文件搬走后它可能空了，等本函数退出时统一清理
 				if d := path.Dir(it.RelPath); d != "." && d != "/" && d != "" {
 					emptied[d] = true
@@ -501,7 +501,7 @@ func (s *Sender) drainHistory(ctx context.Context, stats *Stats) error {
 	}
 }
 
-// uploadOne — 单文件上传全流程（可并发调用）。
+// uploadOne -- 单文件上传全流程（可并发调用）。
 func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Stats) Action {
 	settleD := s.getSettle() // 捕获本轮参数（看板可在线调整）
 	policy := s.getPolicy()
@@ -558,7 +558,7 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	}
 
 	// ── 1.5 镜像模式：覆盖前先归档远端旧版（服务器端 Move，零带宽）──
-	// 归档失败绝不继续上传 —— 旧版还在主树时不能用新内容覆盖（历史优先）。
+	// 归档失败绝不继续上传 ---- 旧版还在主树时不能用新内容覆盖（历史优先）。
 	if s.mirrorOn && e.HasRemote {
 		archived, aerr := s.archiveRemote(ctx, e.RelPath, e.RelPath, e.RMtime)
 		if aerr != nil {
@@ -573,7 +573,7 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 			}
 			e.HasRemote = false
 			stats.apply(func(st *Stats) { st.Archived++ })
-			s.logf("[·] %s 旧版本已归档 → .history/%s/", e.RelPath, historyDateBucket())
+			s.logf("[-] %s 旧版本已归档 → .history/%s/", e.RelPath, historyDateBucket())
 		}
 	}
 
@@ -798,7 +798,7 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	return ActionFail
 }
 
-// persistProgress — 把已完成分片序号（JSON 数组）连同 upload_id 落库。
+// persistProgress -- 把已完成分片序号（JSON 数组）连同 upload_id 落库。
 func (s *Sender) persistProgress(ctx context.Context, relPath, uploadID string, done map[int]string) {
 	seqs := make([]int, 0, len(done))
 	for q := range done {
@@ -812,7 +812,7 @@ func (s *Sender) persistProgress(ctx context.Context, relPath, uploadID string, 
 	s.st.SaveProgress(ctx, relPath, uploadID, string(b))
 }
 
-// rapidInfo — 秒传响应信息 → 写回用 FileInfo；缺失字段用本地值兜底。
+// rapidInfo -- 秒传响应信息 → 写回用 FileInfo；缺失字段用本地值兜底。
 func rapidInfo(r *baidu.RapidResult, localMD5 string, localSize int64) *baidu.FileInfo {
 	fi := &baidu.FileInfo{
 		FsID:  r.FsID,
@@ -833,7 +833,7 @@ func rapidInfo(r *baidu.RapidResult, localMD5 string, localSize int64) *baidu.Fi
 	return fi
 }
 
-// createDataOffset — 秒传V2 防伪偏移（上游 creaetDataOffset 复刻）：
+// createDataOffset -- 秒传V2 防伪偏移（上游 creaetDataOffset 复刻）：
 // offset = md5(uk + contentMD5 + ts) 前 8 位 hex % (fileSize - subSize + 1)。
 func createDataOffset(contentMD5 string, uk, dataTime, fileSize, subSize int64) (int64, error) {
 	h := md5.New()
@@ -849,7 +849,7 @@ func createDataOffset(contentMD5 string, uk, dataTime, fileSize, subSize int64) 
 	return raw % (fileSize - subSize + 1), nil
 }
 
-// backoffSleep — full jitter 退避（design §12：rand(0, min(30s, 1s×2^attempt))）。
+// backoffSleep -- full jitter 退避（design §12：rand(0, min(30s, 1sx2^attempt))）。
 // 返回 true=继续重试；false=ctx 已结束。
 func backoffSleep(ctx context.Context, attempt int) bool {
 	d := time.Second << (attempt - 1)

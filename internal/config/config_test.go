@@ -116,7 +116,7 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-// TestPairRequired — 备份对必须显式声明：缺任一项都拒绝运行（不猜、不兜底）。
+// TestPairRequired -- 备份对必须显式声明：缺任一项都拒绝运行（不猜、不兜底）。
 func TestPairRequired(t *testing.T) {
 	cfg := Default()
 	if err := cfg.ValidatePair(); err == nil {
@@ -136,7 +136,7 @@ func TestPairRequired(t *testing.T) {
 	}
 }
 
-// TestRelativePathsAnchoredToConfigDir — 相对路径以配置文件目录为基准
+// TestRelativePathsAnchoredToConfigDir -- 相对路径以配置文件目录为基准
 // （便携性保证：从任何目录调用，结果一致）。
 func TestRelativePathsAnchoredToConfigDir(t *testing.T) {
 	dir := t.TempDir()

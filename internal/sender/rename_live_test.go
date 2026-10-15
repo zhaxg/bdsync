@@ -10,7 +10,7 @@ import (
 	"bdsync/internal/index"
 )
 
-// TestRenameE2E_Live — 改名管道真机端到端（M2 验收）。
+// TestRenameE2E_Live -- 改名管道真机端到端（M2 验收）。
 // 沙箱内无法读 USN journal，故用 DAO 调用精确模拟 RunUsnCycle 的改名处理：
 // 本地真实改名 + st.MoveEntry / st.RewriteSubtree（usn 路径同款调用）→ Drain → 远端核对。
 //

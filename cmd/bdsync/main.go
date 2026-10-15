@@ -1,4 +1,4 @@
-// bdsync — 本地 → 百度网盘 单向备份守护进程（design.md 设计稿 v1）。
+// bdsync -- 本地 → 百度网盘 单向备份守护进程（design.md 设计稿 v1）。
 //
 // Phase 1：本地全量扫描（poll 后端）+ SQLite 索引 + 只读校验。
 //
@@ -29,16 +29,16 @@ import (
 	"bdsync/internal/sender"
 )
 
-// appCfg — 启动时加载的配置（flag > 配置文件 > 默认值）。
+// appCfg -- 启动时加载的配置（flag > 配置文件 > 默认值）。
 var appCfg *config.Config
 
-// appCfgPath — 实际加载的配置文件路径（看板保存时写回该文件；空 = bdsync.yaml）。
+// appCfgPath -- 实际加载的配置文件路径（看板保存时写回该文件；空 = bdsync.yaml）。
 var appCfgPath string
 
-// defaultDB — 索引库路径（service.db_path，可被 --db 覆盖）。
+// defaultDB -- 索引库路径（service.db_path，可被 --db 覆盖）。
 func defaultDB() string { return appCfg.Service.DBPath }
 
-// excludeFrom — --exclude（逗号分隔）优先，否则用配置文件的 exclude 列表。
+// excludeFrom -- --exclude（逗号分隔）优先，否则用配置文件的 exclude 列表。
 func excludeFrom(flagVal string) []string {
 	if strings.TrimSpace(flagVal) == "" {
 		return appCfg.Exclude
@@ -52,7 +52,7 @@ func excludeFrom(flagVal string) []string {
 	return out
 }
 
-// stripConfigArgs — --config 已在预解析阶段消费，从分发参数中剥掉，
+// stripConfigArgs -- --config 已在预解析阶段消费，从分发参数中剥掉，
 // 避免子命令 FlagSet 报 "flag provided but not defined"。
 func stripConfigArgs(args []string) []string {
 	out := make([]string, 0, len(args))
@@ -70,7 +70,7 @@ func stripConfigArgs(args []string) []string {
 	return out
 }
 
-// loadConfigFromArgs — 从 os.Args 里预解析 --config（先于 flag 解析，使配置
+// loadConfigFromArgs -- 从 os.Args 里预解析 --config（先于 flag 解析，使配置
 // 能作为 flag 的默认值）。未指定时探测 ./bdsync.yaml。
 func loadConfigFromArgs(args []string) error {
 	path := ""
@@ -97,7 +97,7 @@ func loadConfigFromArgs(args []string) error {
 	return nil
 }
 
-// openConfiguredStore — 配置驱动的统一入口（scan/send/daemon/status/check/reconcile 通用）：
+// openConfiguredStore -- 配置驱动的统一入口（scan/send/daemon/status/check/reconcile 通用）：
 //
 //  1. 校验 pair 必填（配置驱动：目标不明 → 拒绝运行）
 //  2. 打开索引库；不存在则按配置新建（就地部署：库与二进制同目录）
@@ -138,7 +138,7 @@ func openConfiguredStore(ctx context.Context, dbOverride string) (*index.Store, 
 	return st, localRoot, remoteRoot, nil
 }
 
-// sameLocalPath — 本地路径比较：先 Clean 统一分隔符风格（`D:/x` ≡ `D:\x`），
+// sameLocalPath -- 本地路径比较：先 Clean 统一分隔符风格（`D:/x` == `D:\x`），
 // Windows 上再忽略大小写。
 func sameLocalPath(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
@@ -148,13 +148,13 @@ func sameLocalPath(a, b string) bool {
 	return a == b
 }
 
-// sameRemotePath — 远端网盘路径比较：只忽略结尾斜杠，**大小写敏感**
+// sameRemotePath -- 远端网盘路径比较：只忽略结尾斜杠，**大小写敏感**
 // （网盘路径区分大小写，同名不同案是两个目录）。
 func sameRemotePath(a, b string) bool {
 	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
-// fillMemMetrics — 填充内存分解指标（扫描报告用）。
+// fillMemMetrics -- 填充内存分解指标（扫描报告用）。
 func fillMemMetrics(res *detector.ScanResult) {
 	if rss, peak, ok := processMem(); ok {
 		res.RssBytes, res.PeakRssBytes = rss, peak
@@ -167,9 +167,9 @@ func fillMemMetrics(res *detector.ScanResult) {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `bdsync — 本地 → 百度网盘 单向备份
+	fmt.Fprint(os.Stderr, `bdsync -- 本地 → 百度网盘 单向备份
 
-  ★ 直接双击本 exe（不带任何参数）即可启动：控制台打印看板地址，**不自动开浏览器**，
+  * 直接双击本 exe（不带任何参数）即可启动：控制台打印看板地址，**不自动开浏览器**，
     自己在终端里按住 Ctrl 单击地址打开，网页里填三项就能开始备份。
 
 用法:
@@ -186,12 +186,12 @@ func usage() {
 
 服务化（nssm / 计划任务 / systemd）:
   bdsync --service            或环境变量 BDSYNC_SERVICE=1
-    · 不弹浏览器、启动失败不等按键（否则进程会卡在 Scanln 上被服务管理器判超时）
-    · stdout 可重定向到文件；停止走 SIGINT/SIGTERM（nssm 的 CTRL_C/关闭窗口）
-    · 配置/凭据/索引一律按 exe 所在目录解析，与工作目录无关
+    - 不弹浏览器、启动失败不等按键（否则进程会卡在 Scanln 上被服务管理器判超时）
+    - stdout 可重定向到文件；停止走 SIGINT/SIGTERM（nssm 的 CTRL_C/关闭窗口）
+    - 配置/凭据/索引一律按 exe 所在目录解析，与工作目录无关
 
 配置（就地便携：exe + bdsync.yaml + index.db + credentials.dat + logs/ 同一文件夹，可整体搬走）:
-  --config bdsync.yaml   未指定时探测 <exe同目录>/bdsync.yaml → ./bdsync.yaml → …
+  --config bdsync.yaml   未指定时探测 <exe同目录>/bdsync.yaml → ./bdsync.yaml → ...
   必填 pair（缺任一项拒绝启动，备份目标不许靠猜）:
     pair.local_root: "D:/YourData"          本地根目录（严格只读）
     pair.remote:     "/bdsync-backup"     网盘内路径（/ 开头）
@@ -200,7 +200,7 @@ func usage() {
 
 凭据（BDUSS/STOKEN）绝不进配置文件，两个来源（优先级从高到低）:
   1) 环境变量  set BDSYNC_COOKIE="BDUSS=xxx; STOKEN=yyy"   （或 BDSYNC_BDUSS / BDSYNC_STOKEN）
-  2) 二进制同目录 credentials.dat —— 明文文件，看板里勾「记住凭据」生成
+  2) 二进制同目录 credentials.dat ---- 明文文件，看板里勾「记住凭据」生成
      cookie 过期时不必重走向导：看板「配置 → 网盘凭据」贴一条新的即可，保存后自动重启运行时
 
 后端:
@@ -211,6 +211,11 @@ func usage() {
 }
 
 func main() {
+	// stdout/stderr 可能被换成了「写入即转码」的管道（见 console_windows.go）。
+	// 正常 return 的路径（help 等）必须收尾，否则最后几行会随进程一起消失；
+	// os.Exit 的路径不跑 defer，由 exitProcess 代劳。
+	defer flushConsole()
+
 	// --service 不是任何子命令的 flag：先剥掉，它只影响 serviceMode（见 creds_api.go）
 	args := os.Args
 	if hasFlag(args[1:], "--service") || hasFlag(args[1:], "-service") {
@@ -220,9 +225,9 @@ func main() {
 	// 零门槛入口：**直接双击 exe**（不带子命令）= 启动看板 + 向导
 	if len(args) < 2 {
 		if err := loadConfigFromArgs(nil); err != nil {
-			fmt.Fprintln(os.Stderr, "✗ 配置读取失败:", err)
+			fmt.Fprintln(os.Stderr, "[X] 配置读取失败:", err)
 			pauseBeforeExit()
-			os.Exit(1)
+			exitProcess(1) // 不用 os.Exit：转码管道要收尾（console_windows.go）
 		}
 		runWebEntry(nil)
 		return
@@ -232,9 +237,9 @@ func main() {
 		return
 	}
 	if err := loadConfigFromArgs(args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, "✗", err)
+		fmt.Fprintln(os.Stderr, "[X]", err)
 		pauseBeforeExit()
-		os.Exit(2)
+		exitProcess(2)
 	}
 	cmdArgs := stripConfigArgs(args[2:])
 	var err error
@@ -264,16 +269,16 @@ func main() {
 		return
 	default:
 		usage()
-		os.Exit(2)
+		exitProcess(2)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		pauseBeforeExit()
-		os.Exit(1)
+		exitProcess(1)
 	}
 }
 
-// hasFlag — 参数里是否含指定 flag（用于服务模式识别与剥离）。
+// hasFlag -- 参数里是否含指定 flag（用于服务模式识别与剥离）。
 func hasFlag(args []string, name string) bool {
 	for _, a := range args {
 		if a == name {
@@ -518,7 +523,7 @@ func cmdValidate(args []string) error {
 		return err
 	}
 	abs, _ := filepath.Abs(*root)
-	fmt.Printf("✓ %s\n  是本地固定磁盘上的目录，可作为备份根目录（校验过程只读）。\n", abs)
+	fmt.Printf("[OK] %s\n  是本地固定磁盘上的目录，可作为备份根目录（校验过程只读）。\n", abs)
 	return nil
 }
 
@@ -543,16 +548,16 @@ type statusJSON struct {
 	Last    *detector.ScanResult `json:"last_scan,omitempty"`
 }
 
-// loadCookie — BDUSS/STOKEN 只从环境变量读取，绝不落盘（design 安全约束）。
-// memCookie / memCookieSrc — 运行期由网页向导或「凭据」卡片注入的凭据（仅内存，不落盘）
+// loadCookie -- BDUSS/STOKEN 只从环境变量读取，绝不落盘（design 安全约束）。
+// memCookie / memCookieSrc -- 运行期由网页向导或「凭据」卡片注入的凭据（仅内存，不落盘）
 // 及其来源。来源必须跟着值一起记：只看"memCookie 有没有值"会把冷启动从
-// credentials.dat 读回来的凭据误报成"仅本次进程（未保存）"—— 与事实相反。
+// credentials.dat 读回来的凭据误报成"仅本次进程（未保存）"---- 与事实相反。
 var (
 	memCookie    atomic.Value // string
 	memCookieSrc atomic.Value // string: "session" | "file"
 )
 
-// setCookieForRun — 供网页把用户刚输入的凭据交给运行时（来源=本次录入）。
+// setCookieForRun -- 供网页把用户刚输入的凭据交给运行时（来源=本次录入）。
 func setCookieForRun(c string) { setCookieForRunFrom(c, "session") }
 
 func setCookieForRunFrom(c, src string) {
@@ -674,7 +679,7 @@ func cmdMeta(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ %s\n  fs_id=%d  md5=%s  size=%d  mtime=%s  isdir=%v\n",
+	fmt.Printf("[OK] %s\n  fs_id=%d  md5=%s  size=%d  mtime=%s  isdir=%v\n",
 		fi.Path, fi.FsID, fi.MD5, fi.Size, time.Unix(fi.Mtime, 0).Format("2006-01-02 15:04:05"), fi.Isdir)
 	if fi.Isdir {
 		items, err := bc.List(*remotePath)
@@ -747,17 +752,17 @@ func cmdCheck(args []string) error {
 		remotePath := path.Join(remoteRoot, e.RelPath)
 		dmd5, dsize, err := bc.DownloadAndHash(remotePath, e.Size)
 		if err != nil {
-			fmt.Printf("[✗] %s  下载失败: %v\n", e.RelPath, err)
+			fmt.Printf("[[X]] %s  下载失败: %v\n", e.RelPath, err)
 			continue
 		}
 		if dmd5 != e.LMD5 {
 			// 0 字节文件的历史行 l_md5 为空：空内容 md5 为标准常量
 			if e.Size == 0 && e.LMD5 == "" && dmd5 == "d41d8cd98f00b204e9800998ecf8427e" {
 				pass++
-				fmt.Printf("[✓] %s  空文件 md5=%s\n", e.RelPath, dmd5)
+				fmt.Printf("[[OK]] %s  空文件 md5=%s\n", e.RelPath, dmd5)
 				continue
 			}
-			fmt.Printf("[✗] %s  内容不一致！本地 md5=%s 下载 md5=%s (size %d/%d)\n",
+			fmt.Printf("[[X]] %s  内容不一致！本地 md5=%s 下载 md5=%s (size %d/%d)\n",
 				e.RelPath, e.LMD5, dmd5, e.Size, dsize)
 			continue
 		}
@@ -767,7 +772,7 @@ func cmdCheck(args []string) error {
 			metaBad++
 			note = fmt.Sprintf("远端元数据 md5=%s 与实际内容不符（服务端已知问题，内容无损）", e.RMD5)
 		}
-		fmt.Printf("[✓] %s  md5=%s  %s\n", e.RelPath, dmd5, note)
+		fmt.Printf("[[OK]] %s  md5=%s  %s\n", e.RelPath, dmd5, note)
 	}
 	fmt.Printf("\n校验完成：内容一致 %d/%d，其中远端元数据异常 %d\n", pass, len(list), metaBad)
 	if pass != len(list) {
@@ -793,7 +798,7 @@ func printDryRun(ctx context.Context, st *index.Store, localRoot, remoteRoot str
 	if pend.Deferred > 0 {
 		fmt.Printf("  （其中 %s 个推迟中：settle 未到 / 写入中 / 上轮临时失败，drain 会自动重试）\n", commas(pend.Deferred))
 	}
-	// 镜像模式：归档预览（首跑安全网 —— 升级后第一次 drain 前先看这里）
+	// 镜像模式：归档预览（首跑安全网 ---- 升级后第一次 drain 前先看这里）
 	if appCfg.Mirror.Enabled {
 		fmt.Printf("  镜像模式    归档目录 %s，保留 %d 天\n",
 			appCfg.Mirror.HistoryDir, appCfg.Mirror.HistoryDays)
@@ -822,12 +827,12 @@ func printDryRun(ctx context.Context, st *index.Store, localRoot, remoteRoot str
 		fmt.Printf("    ... 其余 %s 个\n", commas(pend.Count-int64(len(list))))
 	}
 	if pend.Count == 0 && pend.History == 0 {
-		fmt.Println("  队列已排空 ✓")
+		fmt.Println("  队列已排空 [OK]")
 	}
 	return nil
 }
 
-// cmdReconcile — 手动触发远端清单对账（design镜像 Q2）或历史清理（--prune）。
+// cmdReconcile -- 手动触发远端清单对账（design镜像 Q2）或历史清理（--prune）。
 func cmdReconcile(args []string) error {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	dbPath := fs.String("db", defaultDB(), "SQLite 索引文件")
@@ -921,6 +926,6 @@ func printSendStats(s *sender.Stats) {
 		fmt.Printf("  平均速率 %s/s\n", humanBytes(int64(float64(s.Bytes)/s.Elapsed.Seconds())))
 	}
 	if s.FatalError != nil {
-		fmt.Printf("  ✗ 致命错误，已停止：%v\n", s.FatalError)
+		fmt.Printf("  [X] 致命错误，已停止：%v\n", s.FatalError)
 	}
 }

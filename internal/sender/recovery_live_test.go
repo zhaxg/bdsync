@@ -10,7 +10,7 @@ import (
 	"bdsync/internal/index"
 )
 
-// TestRecoverArchiveIncident_Live — 误归档事故恢复演练（也是真实恢复预案）。
+// TestRecoverArchiveIncident_Live -- 误归档事故恢复演练（也是真实恢复预案）。
 //
 // 背景：M3 开发中曾因清单判断 bug 把主树全部误归档（对账把"文件清单值=false"
 // 误判为不存在）。恢复思路：内容仍在服务端（.history）→ 全部重新入队 →

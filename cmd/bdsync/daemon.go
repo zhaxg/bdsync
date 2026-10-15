@@ -26,7 +26,7 @@ import (
 	"bdsync/web"
 )
 
-// version — 运行时版本号。
+// version -- 运行时版本号。
 //
 // 优先取构建期注入的 -ldflags "-X main.version=..."（CI 按 git tag 注入，
 // 见 .github/workflows/release.yml）；开发态没注入时退回下面的默认值，
@@ -35,14 +35,14 @@ import (
 // 用 var 而非 const：const 无法被链接器覆写（-X 只对 string 类型的 var 生效）。
 var version = defaultVersion
 
-// defaultVersion — 未注入时的兜底版本号（开发态）。
+// defaultVersion -- 未注入时的兜底版本号（开发态）。
 const defaultVersion = "v0.6-web"
 
-// quietHeartbeat — 静默期心跳间隔。
+// quietHeartbeat -- 静默期心跳间隔。
 //
 // 为什么需要：P2 要求"无变更时绝对空闲"，所以真正常驻的实例日志会长时间没有新行
 // （实测出现过 103 分钟的静默段）。这在设计上是正确的，但只看日志文件无法区分
-// 「安静地活着」和「卡死/被杀」——两者长得一模一样。
+// 「安静地活着」和「卡死/被杀」----两者长得一模一样。
 //
 // 折中：**只在 QUIET/暂停时打**，有活干时一行都不多打，保住 P2 的低噪声目标；
 // 一旦进入静默，就每 quietHeartbeat 留一个活体证据。
@@ -51,13 +51,13 @@ const defaultVersion = "v0.6-web"
 // 约 15KB，相对 10MB 轮转上限可忽略，仍远低于"刷屏"。
 const quietHeartbeat = 10 * time.Minute
 
-// activity — 上次扫描/排空的摘要（看板展示）。
+// activity -- 上次扫描/排空的摘要（看板展示）。
 type activity struct {
 	At      time.Time
 	Summary string
 }
 
-// runtimeState — daemon 运行态：配置快照、后端实例、状态机标志、控制面。
+// runtimeState -- daemon 运行态：配置快照、后端实例、状态机标志、控制面。
 // web 层只通过它的方法读写，不感知 daemon 循环细节。
 type runtimeState struct {
 	mu        sync.RWMutex
@@ -75,9 +75,9 @@ type runtimeState struct {
 	localRoot  string
 	remoteRoot string
 	backend    string
-	// degraded — usn 打不开/失效后已降级 poll（design 硬规矩①）。
+	// degraded -- usn 打不开/失效后已降级 poll（design 硬规矩1)）。
 	// 存在 runtimeState 里而非只当循环局部变量：rt.backend 是启动时的快照，
-	// 降级后不再变，日志/看板会一直显示 "usn" —— 排障时会指向错误的后端。
+	// 降级后不再变，日志/看板会一直显示 "usn" ---- 排障时会指向错误的后端。
 	degraded  atomic.Bool
 	schemaVer int
 	startedAt  time.Time
@@ -96,7 +96,7 @@ type rtSnapshot struct {
 	lastDrain *activity
 }
 
-// backendName — 展示用后端名。降级后必须显示 poll，否则日志/看板会把
+// backendName -- 展示用后端名。降级后必须显示 poll，否则日志/看板会把
 // 故障指向一个实际没在跑的后端（design §4.9：usn 失效 → 降级 poll）。
 func (r *runtimeState) backendName() string {
 	if r.backend != "usn" {
@@ -154,7 +154,7 @@ func (r *runtimeState) setLastDrain(a *activity) {
 	r.mu.Unlock()
 }
 
-// applyLive — 把保存的配置中的**可热更新子集**落进运行态（结构性字段不采纳，
+// applyLive -- 把保存的配置中的**可热更新子集**落进运行态（结构性字段不采纳，
 // 由调用方把它们列为"需重启"），并按新排除规则重建 poll 实例。
 func (r *runtimeState) applyLive(next *config.Config) {
 	r.mu.Lock()
@@ -178,7 +178,7 @@ func (r *runtimeState) applyLive(next *config.Config) {
 	})
 }
 
-// rPollStore — applyLive 里重建 poll 所需的索引库（由 cmdDaemon 启动时注入）。
+// rPollStore -- applyLive 里重建 poll 所需的索引库（由 cmdDaemon 启动时注入）。
 var rPollStore *index.Store
 
 // ── web.Control 实现 ──
@@ -281,7 +281,7 @@ func cmdDaemon(args []string) error {
 	return runService(ctx, stop, eff, serviceOpts{AppID: *appID})
 }
 
-// serviceOpts — runService 的可注入项（web 模式复用同一套运行时，
+// serviceOpts -- runService 的可注入项（web 模式复用同一套运行时，
 // 但看板要先于配置就绪而存在）。
 type serviceOpts struct {
 	AppID   int
@@ -290,7 +290,7 @@ type serviceOpts struct {
 	OnReady func(rt *runtimeState, st *index.Store)
 }
 
-// runService — 备份运行时主体：索引库 → 后端 → Sender → 看板 → 检测/排空循环。
+// runService -- 备份运行时主体：索引库 → 后端 → Sender → 看板 → 检测/排空循环。
 // daemon 与 web（配置完成后）都走这里，保证两条入口行为完全一致。
 func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config, opts serviceOpts) error {
 	trace("runService: 打开索引 %s (root=%s)", eff.Service.DBPath, eff.Pair.LocalRoot)
@@ -435,20 +435,20 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 	}
 
 	logf("daemon 启动  后端=%s  本地=%s → 网盘=%s", mode, localRoot, remoteRoot)
-	logf("  调度: flush_interval=%s 高水位=%s min_gap=%s | 对账=%s | 并发≤%d settle=%s",
+	logf("  调度: flush_interval=%s 高水位=%s min_gap=%s | 对账=%s | 并发<=%d settle=%s",
 		eff.Sender.FlushInterval, humanBytes(eff.Sender.FlushBytes.Int64()), eff.Sender.MinGap,
 		eff.Detector.ReconcileInterval, eff.Sender.Concurrency, eff.Sender.SettleDuration)
 	if len(eff.Exclude) > 0 {
 		logf("  排除: %s", strings.Join(eff.Exclude, ", "))
 	}
 	if eff.Mirror.Enabled {
-		logf("  镜像: 开启（.history/%d 天，on_rename=%s，远端对账 %s）——修改/删除会先归档旧版再动主树",
+		logf("  镜像: 开启（.history/%d 天，on_rename=%s，远端对账 %s）----修改/删除会先归档旧版再动主树",
 			eff.Mirror.HistoryDays, eff.Mirror.OnRename, eff.Mirror.RemoteReconcile)
 	} else {
 		logf("  镜像: 关闭（design 原始备份语义：不传播删除）")
 	}
 	if eff.Service.LogFile != "" {
-		logf("  日志: %s（≤%dMB × %d 份轮转）", eff.Service.LogFile, eff.Service.LogMaxMB, eff.Service.LogKeep)
+		logf("  日志: %s（<=%dMB x %d 份轮转）", eff.Service.LogFile, eff.Service.LogMaxMB, eff.Service.LogKeep)
 	}
 
 	// 启动即全量对账：排除规则立即生效、dir_ref/游标引导（poll 成本 ~0.5s）
@@ -460,7 +460,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 		if rres, rerr := snd.ReconcileRemote(ctx, false); rerr != nil {
 			logf("[对账] 启动对账失败（按周期重试）: %v", rerr)
 		} else {
-			logf("[对账·启动] %s", rres.Summary())
+			logf("[对账-启动] %s", rres.Summary())
 		}
 	}
 
@@ -470,7 +470,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 		lastDrainEnd        = time.Now().Add(-time.Duration(eff.Sender.FlushInterval.Nanos()))
 		nextReconcile       = time.Now().Add(time.Duration(eff.Detector.ReconcileInterval.Nanos()))
 		lastRemoteReconcile = time.Now()
-		degraded            bool // usn 打不开/失效 → 本进程内降级 poll（design 硬规矩①）
+		degraded            bool // usn 打不开/失效 → 本进程内降级 poll（design 硬规矩1)）
 		lastBeat            = time.Now()
 		quietSince          time.Time // 零值 = 当前不是静默态
 	)
@@ -504,7 +504,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 			if !quietSince.IsZero() && now.Sub(lastBeat) >= quietHeartbeat {
 				lastBeat = now
 				rss, _, memOK := processMem()
-				mem := "—"
+				mem := "--"
 				if memOK {
 					mem = humanBytes(rss)
 				}
@@ -515,7 +515,7 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					if snap.paused {
 						state, suffix = "PAUSED", "（已暂停）"
 					}
-					logf("[心跳] %s%s：静默 %s · 队列 %d 项（%s）· RSS %s · 后端 %s · 已运行 %s",
+					logf("[心跳] %s%s：静默 %s - 队列 %d 项（%s）- RSS %s - 后端 %s - 已运行 %s",
 						state, suffix, elapsed,
 						pend.Count+pend.History, humanBytes(pend.Bytes), mem, rt.backendName(), uptime)
 				}
@@ -621,11 +621,11 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 						logf("[drain] 开始排空：%s", what)
 						dstats, err := snd.Drain(ctx, 0) // work-conserving：排空到低水位
 						lastDrainEnd = time.Now()
-						summary := fmt.Sprintf("秒传 %d / 上传 %d / 归档 %d / 改名 %d / 推迟 %d / 失败 %d · 传输 %s",
+						summary := fmt.Sprintf("秒传 %d / 上传 %d / 归档 %d / 改名 %d / 推迟 %d / 失败 %d - 传输 %s",
 							dstats.RapidOK, dstats.Uploaded, dstats.Archived, dstats.Renamed,
 							dstats.Deferred, dstats.Failed, humanBytes(dstats.Bytes))
 						if dstats.PrunedDirs > 0 {
-							summary += fmt.Sprintf(" · 清空目录 %d", dstats.PrunedDirs)
+							summary += fmt.Sprintf(" - 清空目录 %d", dstats.PrunedDirs)
 						}
 						logf("[drain] 完成：%s（%s）", summary, msHuman(int64(dstats.Elapsed/time.Millisecond)))
 						rt.setLastDrain(&activity{At: lastDrainEnd, Summary: summary})
@@ -658,7 +658,7 @@ func markActive(rt *runtimeState, lastChange *time.Time, logf func(string, ...an
 	*lastChange = time.Now()
 }
 
-// runFullScan — poll 全量扫描（usn 的降级路径 + 周期/启动对账）。返回是否有变更。
+// runFullScan -- poll 全量扫描（usn 的降级路径 + 周期/启动对账）。返回是否有变更。
 func runFullScan(ctx context.Context, rt *runtimeState, root, reason string) bool {
 	snap := rt.snap()
 	runID, err := rPollStore.NextRunID(ctx)
@@ -677,7 +677,7 @@ func runFullScan(ctx context.Context, rt *runtimeState, root, reason string) boo
 	if changed || reason != "" {
 		prefix := "[scan]"
 		if reason != "" {
-			prefix = "[scan·" + reason + "]"
+			prefix = "[scan-" + reason + "]"
 		}
 		fmt.Printf("%s %s\n", prefix, summary)
 	}
@@ -685,7 +685,7 @@ func runFullScan(ctx context.Context, rt *runtimeState, root, reason string) boo
 	return changed
 }
 
-// durCfg — time.Duration → config.Duration。
+// durCfg -- time.Duration → config.Duration。
 func durCfg(d time.Duration) config.Duration { return config.DurationOf(d) }
 
 // ── 看板状态快照（按需构建；服务端不做周期性 DB 轮询，design §13）──
@@ -747,7 +747,7 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 	}
 }
 
-// daemonCreds — `bdsync daemon`（独立看板）用的凭据接口。
+// daemonCreds -- `bdsync daemon`（独立看板）用的凭据接口。
 //
 // 与 webcmd 里 setupState 的实现差别只在"保存之后怎么办"：daemon 的运行时是
 // 主循环本身，进程内没有安全的重启入口，所以落盘后如实告诉人"重启服务生效"。
@@ -791,7 +791,7 @@ func daemonCreds() web.CredsIO {
 
 // ── 看板配置读写 ──
 
-// configGet — 当前 YAML 全文 + 基本表单值 + 需重启的结构性字段。
+// configGet -- 当前 YAML 全文 + 基本表单值 + 需重启的结构性字段。
 func configGet(rt *runtimeState) (string, map[string]any, []string) {
 	snap := rt.snap()
 	text := "（尚未保存配置文件；点击保存后将生成 " + saveConfigPath() + "）"
@@ -809,7 +809,7 @@ func configGet(rt *runtimeState) (string, map[string]any, []string) {
 	return text, basic, []string{"detector.mode", "service.log_file / log_max_mb / log_keep / db_path", "web.enabled / web.addr"}
 }
 
-// configSave — 载荷：{"yaml": "..."}（全文覆盖）或 {"settings": {...}}（基本字段）。
+// configSave -- 载荷：{"yaml": "..."}（全文覆盖）或 {"settings": {...}}（基本字段）。
 // 校验 → 热更新子集落运行态 → 写盘；结构性改动只写盘并列入 needs_restart。
 func configSave(rt *runtimeState, payload map[string]any) (applied, restart []string, err error) {
 	snap := rt.snap()
@@ -885,7 +885,7 @@ func configSave(rt *runtimeState, payload map[string]any) (applied, restart []st
 	return applied, restart, nil
 }
 
-// senderLive — 由 cmdDaemon 注入的在线参数下发（避免包级全局耦合）。
+// senderLive -- 由 cmdDaemon 注入的在线参数下发（避免包级全局耦合）。
 var senderLive = func(settle time.Duration, concurrency int, policy string) {}
 
 func structuralChanges(cur, next *config.Config) []string {
@@ -952,7 +952,7 @@ func writeConfigFile(path string, cfg *config.Config) error {
 	return os.Rename(tmp, path)
 }
 
-// cmdSelftest — 显式后端自检（会向 root 写探测文件；绝不自动执行）。
+// cmdSelftest -- 显式后端自检（会向 root 写探测文件；绝不自动执行）。
 func cmdSelftest(args []string) error {
 	fs := flag.NewFlagSet("selftest", flag.ContinueOnError)
 	dbPath := fs.String("db", defaultDB(), "SQLite 索引文件")
@@ -979,13 +979,13 @@ func cmdSelftest(args []string) error {
 		if err := detector.RunUsnSelftest(context.Background(), localRoot, st); err != nil {
 			return err
 		}
-		fmt.Println("✓ usn 自检通过：写入的探测文件在 10s 内产生了 journal 事件")
+		fmt.Println("[OK] usn 自检通过：写入的探测文件在 10s 内产生了 journal 事件")
 		return nil
 	}
 	p := detector.NewPoll(localRoot, st, detector.Options{})
 	if err := p.SelfTest(context.Background(), localRoot); err != nil {
 		return err
 	}
-	fmt.Println("✓ poll 自检通过：探测文件可写、可被扫描路径发现、已清理")
+	fmt.Println("[OK] poll 自检通过：探测文件可写、可被扫描路径发现、已清理")
 	return nil
 }

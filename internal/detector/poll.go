@@ -13,14 +13,14 @@ import (
 	"bdsync/internal/netdiskname"
 )
 
-// Options — poll 后端参数。
+// Options -- poll 后端参数。
 type Options struct {
 	BatchSize int      // 每批写库条数（默认 2000，design §6.2：分批落库避免超长事务）
 	WalkOnly  bool     // 只遍历计数不写库（性能基线对照）
 	Exclude   []string // 排除规则（design §14，见 detector/exclude.go）
 }
 
-// ScanResult — 一次全量扫描的结果与计时。
+// ScanResult -- 一次全量扫描的结果与计时。
 type ScanResult struct {
 	Root     string    `json:"root"`
 	Backend  string    `json:"backend"` // poll | usn
@@ -74,11 +74,11 @@ func (r *ScanResult) noteErr(err error) {
 	r.ErrSamples = append(r.ErrSamples, s)
 }
 
-// NoteErr — 供外部（如 main）追加一条错误样本（最多 5 条）。
+// NoteErr -- 供外部（如 main）追加一条错误样本（最多 5 条）。
 func (r *ScanResult) NoteErr(err error) { r.noteErr(err) }
 
-// Poll — WalkDir 全量扫描后端（portable：Windows/Linux 共用，design §4.1）。
-// 天然完整：全量遍历不存在「丢事件」这回事。也是 usn 后端的正确性对照组（硬规矩③）。
+// Poll -- WalkDir 全量扫描后端（portable：Windows/Linux 共用，design §4.1）。
+// 天然完整：全量遍历不存在「丢事件」这回事。也是 usn 后端的正确性对照组（硬规矩3)）。
 type Poll struct {
 	root    string
 	index   *index.Store // nil = walk-only
@@ -88,7 +88,7 @@ type Poll struct {
 
 var _ Backend = (*Poll)(nil)
 
-// NewPoll — index 传 nil 表示 walk-only（不落库）。
+// NewPoll -- index 传 nil 表示 walk-only（不落库）。
 func NewPoll(root string, st *index.Store, opts Options) *Poll {
 	if opts.BatchSize <= 0 {
 		opts.BatchSize = 2000
@@ -108,7 +108,7 @@ func (p *Poll) Start(ctx context.Context, root string) error {
 	return nil
 }
 
-// Events — poll 由定时器驱动（design §14 poll_interval），没有事件流。
+// Events -- poll 由定时器驱动（design §14 poll_interval），没有事件流。
 func (p *Poll) Events() <-chan Event { return nil }
 
 // SelfTest 见 selftest.go（写探测文件 → 扫描路径确认 → 删除）。
@@ -119,7 +119,7 @@ func (p *Poll) Close() error { return nil }
 
 func ms(d time.Duration) int64 { return int64(d / time.Millisecond) }
 
-// normalizeWalkRoot — Windows 下加 \\?\ 前缀避免 MAX_PATH 260 限制。
+// normalizeWalkRoot -- Windows 下加 \\?\ 前缀避免 MAX_PATH 260 限制。
 // filepath 已把 \\?\C:\ 识别为设备前缀卷名，Clean/Join/Rel 均安全（Go internal/filepathlite）。
 func normalizeWalkRoot(root string) (string, error) {
 	abs, err := filepath.Abs(root)
@@ -134,7 +134,7 @@ func normalizeWalkRoot(root string) (string, error) {
 	return abs, nil
 }
 
-// queueState — 有远端副本 → 修改（LOCAL_MOD）；没有 → 新增（LOCAL_NEW）。
+// queueState -- 有远端副本 → 修改（LOCAL_MOD）；没有 → 新增（LOCAL_NEW）。
 func queueState(rec index.SnapRec) int {
 	if rec.HasRemote {
 		return index.StateLocalMod
@@ -142,9 +142,9 @@ func queueState(rec index.SnapRec) int {
 	return index.StateLocalNew
 }
 
-// ScanAll — 一次全量扫描：WalkDir + 内存快照比对 + 分批写库（design §6.2）。
+// ScanAll -- 一次全量扫描：WalkDir + 内存快照比对 + 分批写库（design §6.2）。
 //
-// 性能要点：稳态（无变更）下零写库 —— 未变路径不动数据库，
+// 性能要点：稳态（无变更）下零写库 ---- 未变路径不动数据库，
 // 删除判定用本轮内存 seen 集合，而不是逐行 bump scan_run（省掉每轮 ~15MB 的 WAL 写放大）。
 func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 	start := time.Now()
@@ -197,7 +197,7 @@ func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 		return nil
 	}
 
-	// markConflict — 网盘不接受的文件名：标 CONFLICT 拦下（design §10 扫描阶段拦截，
+	// markConflict -- 网盘不接受的文件名：标 CONFLICT 拦下（design §10 扫描阶段拦截，
 	// 绝不排队上传、绝不等传到一半才失败）。已是 CONFLICT 行 → 稳态零写入。
 	markConflict := func(rel string, isDir bool, size, mtime int64, msg string) error {
 		rec, ok, err := p.index.LookupEntry(ctx, rel)
@@ -381,7 +381,7 @@ func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 	}
 
 	// 删除判定：本轮没见到的 = 本地已删（远端保留，design §9.2）。
-	// 只有遍历完整（walkErr == nil）才允许做 —— 半途而废的扫描不能产生删除结论。
+	// 只有遍历完整（walkErr == nil）才允许做 ---- 半途而废的扫描不能产生删除结论。
 	var missing []string
 	for rel, rec := range snap {
 		if _, ok := seen[rel]; ok {

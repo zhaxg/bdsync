@@ -24,7 +24,7 @@ func dbFileSize(path string) int64 {
 	return total
 }
 
-// commas — 千分位。
+// commas -- 千分位。
 func commas(n int64) string {
 	s := strconv.FormatInt(n, 10)
 	neg := s[0] == '-'
@@ -44,7 +44,7 @@ func commas(n int64) string {
 	return b.String()
 }
 
-// humanBytes — 人类可读字节数。
+// humanBytes -- 人类可读字节数。
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -72,9 +72,9 @@ func printScanReport(res *detector.ScanResult, dbPath string, dbSize int64, json
 		return
 	}
 
-	status := "✓ 扫描完成"
+	status := "[OK] 扫描完成"
 	if !res.WalkOK {
-		status = "⚠ 扫描未完整（部分结果，未做删除判定）"
+		status = "[!] 扫描未完整（部分结果，未做删除判定）"
 	}
 	if res.WalkOnly {
 		status += "  [walk-only：未写库]"
@@ -114,7 +114,7 @@ func printScanReport(res *detector.ScanResult, dbPath string, dbSize int64, json
 	}
 	if res.RssBytes > 0 {
 		fmt.Printf("  内存          RSS %s（峰值 %s）\n", humanBytes(res.RssBytes), humanBytes(res.PeakRssBytes))
-		fmt.Printf("                Go Sys %s（堆 sys %s，已归还 %s，存活堆 %s）| 非 Go（SQLite/系统 DLL）≈ %s\n",
+		fmt.Printf("                Go Sys %s（堆 sys %s，已归还 %s，存活堆 %s）| 非 Go（SQLite/系统 DLL）~= %s\n",
 			humanBytes(res.GoSysBytes), humanBytes(res.HeapSysBytes), humanBytes(res.HeapRelBytes),
 			humanBytes(res.HeapBytes), humanBytes(res.RssBytes-res.GoSysBytes))
 	}
@@ -129,7 +129,7 @@ func printScanReport(res *detector.ScanResult, dbPath string, dbSize int64, json
 func printStatus(dbPath string, dbSize int64, root, remoteRoot, mode string, schemaVer int, pairID int64,
 	counts *index.Counts, pend *index.Pending, last *detector.ScanResult, haveStats bool) {
 
-	fmt.Printf("bdsync status — %s (%s)\n", dbPath, humanBytes(dbSize))
+	fmt.Printf("bdsync status -- %s (%s)\n", dbPath, humanBytes(dbSize))
 	fmt.Printf("  根目录        %s\n", root)
 	if remoteRoot != "" {
 		fmt.Printf("  远端目录      %s\n", remoteRoot)

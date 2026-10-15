@@ -1,6 +1,6 @@
 //go:build windows
 
-// Package power — Windows 进程静默控制（design §4.4/§4.5）：
+// Package power -- Windows 进程静默控制（design §4.4/§4.5）：
 // 优先级切换、Job Object CPU 硬上限、内存修剪。
 package power
 
@@ -34,7 +34,7 @@ const (
 	cpuRateControlHardCap              = 0x4
 )
 
-// currentProcess — 伪句柄，无需 CloseHandle。
+// currentProcess -- 伪句柄，无需 CloseHandle。
 const currentProcess = ^uintptr(0)
 
 var (
@@ -43,7 +43,7 @@ var (
 	activeCapPct = 80 // quota.active_cpu_cap
 )
 
-// ConfigureCaps — CPU 硬上限（%，来自配置）。
+// ConfigureCaps -- CPU 硬上限（%，来自配置）。
 func ConfigureCaps(quiet, active int) {
 	if quiet > 0 && quiet <= 100 {
 		quietCapPct = quiet
@@ -53,8 +53,8 @@ func ConfigureCaps(quiet, active int) {
 	}
 }
 
-// InitJob — 创建 Job 并把当前进程放进去（CPU 硬上限的前置）。
-// 进程已在别的 Job 里（如容器）时会失败 —— 非致命，返回错误即可。
+// InitJob -- 创建 Job 并把当前进程放进去（CPU 硬上限的前置）。
+// 进程已在别的 Job 里（如容器）时会失败 ---- 非致命，返回错误即可。
 func InitJob() error {
 	h, _, err := procCreateJobObjectW.Call(0, 0)
 	if h == 0 {
@@ -92,26 +92,26 @@ func setCPUCap(pct int) {
 	)
 }
 
-// SetQuiet — 空闲态：IDLE 优先级 + 硬上限（默认 5%，design §4.4）。
+// SetQuiet -- 空闲态：IDLE 优先级 + 硬上限（默认 5%，design §4.4）。
 // 永不使用 REALTIME（design §4.5 铁律）。
 func SetQuiet() {
 	procSetPriorityClass.Call(currentProcess, idlePriorityClass)
 	setCPUCap(quietCapPct)
 }
 
-// SetActive — 活动态：NORMAL 优先级 + 硬上限（默认 80%，留 20% 给前台）。
+// SetActive -- 活动态：NORMAL 优先级 + 硬上限（默认 80%，留 20% 给前台）。
 func SetActive() {
 	procSetPriorityClass.Call(currentProcess, normalPriorityClass)
 	setCPUCap(activeCapPct)
 }
 
-// SetBelowNormal — 中间档（可选）。
+// SetBelowNormal -- 中间档（可选）。
 func SetBelowNormal() {
 	procSetPriorityClass.Call(currentProcess, belowNormalPriority)
 	setCPUCap(50)
 }
 
-// TrimMemory — 归还内存给 OS（design §4.4：只在进入 QUIET 时调用，成本不小）。
+// TrimMemory -- 归还内存给 OS（design §4.4：只在进入 QUIET 时调用，成本不小）。
 func TrimMemory() {
 	runtime.GC()
 	debug.FreeOSMemory()

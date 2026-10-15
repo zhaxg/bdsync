@@ -10,7 +10,7 @@ import (
 	"bdsync/internal/index"
 )
 
-// TestReconcileAndPrune_Live — M3 真机验收：远端清单对账（清单外 → 归档）
+// TestReconcileAndPrune_Live -- M3 真机验收：远端清单对账（清单外 → 归档）
 // 与历史过期清理。环境变量门控（同 rename_live_test）。
 func TestReconcileAndPrune_Live(t *testing.T) {
 	cookie := os.Getenv("BDSYNC_COOKIE")
