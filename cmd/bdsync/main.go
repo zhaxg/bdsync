@@ -193,7 +193,7 @@ func usage() {
 配置（就地便携：exe + bdsync.yaml + index.db + credentials.dat + logs/ 同一文件夹，可整体搬走）:
   --config bdsync.yaml   未指定时探测 <exe同目录>/bdsync.yaml → ./bdsync.yaml → …
   必填 pair（缺任一项拒绝启动，备份目标不许靠猜）:
-    pair.local_root: "D:/YourData"    本地根目录（严格只读）
+    pair.local_root: "D:/YourData"          本地根目录（严格只读）
     pair.remote:     "/bdsync-backup"     网盘内路径（/ 开头）
   service.db_path 默认 index.db（与二进制同目录）；log_file 默认 logs/bdsync.log
   相对路径一律以配置文件所在目录为基准解析；从任何目录调用结果一致

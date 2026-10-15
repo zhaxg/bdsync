@@ -366,7 +366,7 @@ func (c *Config) ValidatePair() error {
 			"  备份对必须显式声明 —— bdsync 拒绝在目标不明时启动。\n"+
 			"  示例：\n"+
 			"    pair:\n"+
-			"      local_root: \"D:/YourData\"   # 本地根目录（严格只读）\n"+
+			"      local_root: \"D:/YourData\"         # 本地根目录（严格只读）\n"+
 			"      remote: \"/我的备份\"              # 网盘内路径，必须以 / 开头",
 			strings.Join(missing, "、"))
 	}

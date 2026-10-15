@@ -15,7 +15,7 @@
 # ── 备份对（必填，缺任一项 bdsync 拒绝启动）────────────────────
 # 备份目标必须是显式声明的事实：bdsync 不猜、不兜底、不从命令行临时绑定。
 pair:
-  local_root: "D:/YourData"  # 本地根目录（严格只读）；相对路径按本文件目录解析
+  local_root: "D:/YourData"        # 本地根目录（严格只读）；相对路径按本文件目录解析
   remote: "/bdsync-backup"       # 网盘内路径，必须以 / 开头
 
 detector:
