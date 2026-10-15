@@ -119,6 +119,7 @@ type Stats struct {
 	RapidOK    int // 秒传命中
 	Uploaded   int // 分片上传成功
 	Archived   int // 镜像归档（服务器端 Move：历史+主树删除一步完成）
+	PrunedDirs int // 归档后变空、已清理的远端目录（design §9.2「空目录移除」）
 	Renamed    int // 改名远端同步（mv；含 history 策略的降级计数）
 	Deferred   int // 推迟（不算失败）
 	Failed     int
@@ -143,6 +144,7 @@ func (s *Stats) Snapshot() Stats {
 		RapidOK:    s.RapidOK,
 		Uploaded:   s.Uploaded,
 		Archived:   s.Archived,
+		PrunedDirs: s.PrunedDirs,
 		Renamed:    s.Renamed,
 		Deferred:   s.Deferred,
 		Failed:     s.Failed,
@@ -437,6 +439,16 @@ func historySrcRel(it index.HistoryItem) string {
 // 注意：归档失败**不改行状态**（保持 REMOVED_LOCAL + r_fsid，下轮自动重领），
 // 也绝不 FailUpload —— 那会把"本地已删"翻成 ERROR 并被当成待传文件重传。
 func (s *Sender) drainHistory(ctx context.Context, stats *Stats) error {
+	// 归档后变空的父目录；函数退出时统一清理（defer 覆盖下面所有 return 分支）。
+	// 顺序很关键：drainHistory 在上传阶段之前跑完，空目录清掉后若仍有文件要传，
+	// ensureDirs 会按需重建 —— 所以放在 defer 里而不是归档完立刻清是对的。
+	emptied := map[string]bool{}
+	defer func() {
+		if n := s.pruneEmptyDirs(ctx, emptied); n > 0 {
+			stats.apply(func(st *Stats) { st.PrunedDirs += n })
+		}
+	}()
+
 	tried := map[string]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -472,6 +484,10 @@ func (s *Sender) drainHistory(ctx context.Context, stats *Stats) error {
 				}
 				stats.apply(func(st *Stats) { st.Archived++ })
 				s.logf("[·] %s → .history/%s/", it.RelPath, historyDateBucket())
+				// 记下父目录：文件搬走后它可能空了，等本函数退出时统一清理
+				if d := path.Dir(it.RelPath); d != "." && d != "/" && d != "" {
+					emptied[d] = true
+				}
 			} else {
 				// 源已不在 → 补记账
 				if err := s.st.ClearRemote(ctx, it.RelPath); err != nil {

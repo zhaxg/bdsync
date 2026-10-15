@@ -28,6 +28,16 @@ import (
 
 const version = "v0.6-web"
 
+// quietHeartbeat — 静默期心跳间隔。
+//
+// 为什么需要：P2 要求"无变更时绝对空闲"，所以真正常驻的实例日志会长时间没有新行
+// （实测出现过 103 分钟的静默段）。这在设计上是正确的，但只看日志文件无法区分
+// 「安静地活着」和「卡死/被杀」——两者长得一模一样。
+//
+// 折中：**只在 QUIET/暂停时打**，有活干时一行都不多打，保住 P2 的低噪声目标；
+// 一旦进入静默，就每 30 分钟留一个活体证据。
+const quietHeartbeat = 30 * time.Minute
+
 // activity — 上次扫描/排空的摘要（看板展示）。
 type activity struct {
 	At      time.Time
@@ -430,6 +440,8 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 		nextReconcile       = time.Now().Add(time.Duration(eff.Detector.ReconcileInterval.Nanos()))
 		lastRemoteReconcile = time.Now()
 		degraded            bool // usn 打不开/失效 → 本进程内降级 poll（design 硬规矩①）
+		lastBeat            = time.Now()
+		quietSince          time.Time // 零值 = 当前不是静默态
 	)
 
 	tick := time.NewTicker(time.Second)
@@ -446,6 +458,38 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 				lastDetect = time.Time{} // 恢复后立即检测
 				lastChange = now
 			}
+
+			// ── 静默期心跳（放在 paused 早退之前：暂停时同样需要活体证据）──
+			// 静默 = 非 ACTIVE，即 QUIET（空闲）或 PAUSED（用户暂停）。两者都会长时间
+			// 没有新行，只看日志无法区分"安静地活着"和"卡死"。resume 或有活干时
+			// 立刻清零，保证"忙的时候一行都不多打"（design P2）。
+			if snap.active {
+				quietSince = time.Time{}
+				lastBeat = now
+			} else if quietSince.IsZero() {
+				quietSince = now
+				lastBeat = now
+			}
+			if !quietSince.IsZero() && now.Sub(lastBeat) >= quietHeartbeat {
+				lastBeat = now
+				rss, _, memOK := processMem()
+				mem := "—"
+				if memOK {
+					mem = humanBytes(rss)
+				}
+				elapsed := now.Sub(quietSince).Round(time.Minute)
+				uptime := now.Sub(rt.startedAt).Round(time.Minute)
+				if pend, perr := st.PendingStats(ctx); perr == nil {
+					state, suffix := "QUIET", ""
+					if snap.paused {
+						state, suffix = "PAUSED", "（已暂停）"
+					}
+					logf("[心跳] %s%s：静默 %s · 队列 %d 项（%s）· RSS %s · 后端 %s · 已运行 %s",
+						state, suffix, elapsed,
+						pend.Count+pend.History, humanBytes(pend.Bytes), mem, rt.backend, uptime)
+				}
+			}
+
 			if snap.paused {
 				continue // 暂停：不检测、不排空（控制由看板/信号触发）
 			}
@@ -518,6 +562,8 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					rt.setActive(false)
 					power.SetQuiet()
 					power.TrimMemory() // 进入 QUIET 才修剪（design §4.4）
+					quietSince = now // 心跳计时从这一刻起算
+					lastBeat = now
 					logf("[状态] → QUIET（空闲；CPU 上限 %d%%，IDLE 优先级）", cfg.Quota.QuietCPUCap)
 				}
 			}
@@ -546,6 +592,9 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 						summary := fmt.Sprintf("秒传 %d / 上传 %d / 归档 %d / 改名 %d / 推迟 %d / 失败 %d · 传输 %s",
 							dstats.RapidOK, dstats.Uploaded, dstats.Archived, dstats.Renamed,
 							dstats.Deferred, dstats.Failed, humanBytes(dstats.Bytes))
+						if dstats.PrunedDirs > 0 {
+							summary += fmt.Sprintf(" · 清空目录 %d", dstats.PrunedDirs)
+						}
 						logf("[drain] 完成：%s（%s）", summary, msHuman(int64(dstats.Elapsed/time.Millisecond)))
 						rt.setLastDrain(&activity{At: lastDrainEnd, Summary: summary})
 						if err != nil {

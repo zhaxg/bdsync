@@ -36,7 +36,7 @@ func (s *Sender) archiveRemote(ctx context.Context, targetBaseRel, srcRel string
 		return false, nil
 	}
 	src := path.Join(s.remoteRoot, srcRel)
-	date := time.Now().UTC().Format("2006-01-02")
+	date := historyDateBucket()
 	target := path.Join(s.remoteRoot, s.historyDir, date,
 		targetBaseRel+"@"+strconv.FormatInt(rMtime, 10))
 
@@ -92,8 +92,17 @@ func (s *Sender) ensureRemoteChain(full string) error {
 	return nil
 }
 
-// historyDateBucket — 归档日期桶（UTC，展示/日志用）。
-func historyDateBucket() string { return time.Now().UTC().Format("2006-01-02") }
+// historyDateBucket — 归档日期桶，取**本地日期**。
+//
+// 不用 UTC：用户心智是"我今天删的进今天的桶"。取 UTC 会让本地时间 00:00–08:00
+// 之间的操作落进"昨天"的桶 —— 东八区用户每天凌晨都会撞上，看起来像 bug。
+//
+// 归档目标路径（archiveRemote）与日志（sender.go）必须共用本函数：两处各算一次的话，
+// 跨 UTC 零点时会出现"日志说进了 A 桶、实际进了 B 桶"。
+func historyDateBucket() string { return historyDateBucketAt(time.Now()) }
+
+// historyDateBucketAt — 给定时刻的桶名。抽出来是为了能测"取本地而非 UTC"这条不变量。
+func historyDateBucketAt(t time.Time) string { return t.Format("2006-01-02") }
 
 // kvPruneAt — 历史清理时间戳（最多每日一次）。
 const kvPruneAt = "hist_prune_at"
@@ -123,6 +132,70 @@ func (s *Sender) pruneIfDue(ctx context.Context) {
 	}
 }
 
+// forgetDir — 远端目录被删后清掉本进程的建目录缓存。
+// 不清的话后续 ensureDirs/ensureRemoteChain 会以为目录还在而跳过 Mkdir，
+// 上传就会撞 "父目录不存在"。
+func (s *Sender) forgetDir(full string) {
+	s.remoteDirsMu.Lock()
+	delete(s.remoteDirs, full)
+	s.remoteDirsMu.Unlock()
+}
+
+// pruneEmptyDirs — 删除归档后变空的远端目录（design §9.2「空目录移除」）。
+//
+// 为什么必须单独做：目录从不上传，也就从不记账。
+//   - ClaimBatch 只取 is_dir=0（store.go pendingSelect）
+//   - ensureDirs 只建"批内文件的父目录"，不建空目录，且只记在内存 map 里
+//   - r_fsid 全代码库只有 FinishUpload 一处写入，那是文件上传成功的路径
+//
+// 于是目录永远没有 r_fsid，被 HistoryQueue 的 `r_fsid IS NOT NULL` 挡在门外 ——
+// 文件被 Move 进 .history 了，父目录却留在远盘主树里。
+//
+// seeds 是本次归档涉及的相对目录（通常是文件所在目录）。自底向上处理：删掉一个空目录后
+// 它的父目录可能也空了，循环继续；一旦某层非空或删不掉就停，不再往上试。
+//
+// 护栏：只碰 seeds 涉及的目录，不做全树扫描；绝不删 remoteRoot 本体、.history 及其子树。
+// 归档本身仍然是可逆的（文件都在 .history 里），这里只清理已经没有内容的空壳。
+func (s *Sender) pruneEmptyDirs(ctx context.Context, seeds map[string]bool) int {
+	if !s.mirrorOn || s.historyDir == "" || len(seeds) == 0 {
+		return 0
+	}
+	histRoot := path.Join(s.remoteRoot, s.historyDir)
+	removed := 0
+	for rel := range seeds {
+		for d := rel; d != "" && d != "." && d != "/"; d = path.Dir(d) {
+			if err := ctx.Err(); err != nil {
+				return removed
+			}
+			full := path.Join(s.remoteRoot, d)
+			// 护栏：不动 remoteRoot 本体，绝不动 .history 及其子树
+			if full == s.remoteRoot || full == histRoot || strings.HasPrefix(full, histRoot+"/") {
+				break
+			}
+			empty, err := s.bc.IsEmpty(full)
+			if err != nil {
+				if !baidu.RemoteMissing(err) {
+					s.logf("[!] 空目录检查失败 %s: %v", d, err)
+				}
+				break
+			}
+			if !empty {
+				break // 这层还有内容 → 不必再看它的祖先
+			}
+			if err := s.bc.Remove(full); err != nil {
+				if !baidu.RemoteMissing(err) {
+					s.logf("[!] 空目录删除失败 %s: %v", d, err)
+				}
+				break
+			}
+			s.forgetDir(full)
+			s.logf("[·] 空目录已移除 %s/", d)
+			removed++
+		}
+	}
+	return removed
+}
+
 // PruneHistory — 清理过期历史日期桶（服务器端递归删除；design镜像 history_days）。
 // 只删形如 YYYY-MM-DD 的桶；人工放进去的非日期目录永不动。
 func (s *Sender) PruneHistory(ctx context.Context, days int, dryRun bool) ([]string, error) {
@@ -137,7 +210,9 @@ func (s *Sender) PruneHistory(ctx context.Context, days int, dryRun bool) ([]str
 		}
 		return nil, err
 	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	// cutoff 与 historyDateBucket 同一时区基准；差 8 小时对 90 天窗口无实际影响，
+	// 但保持一致才便于日后推理（两者混用时"过期"判定会随机器时区漂移）。
+	cutoff := time.Now().AddDate(0, 0, -days)
 	var removed []string
 	for _, it := range items {
 		if err := ctx.Err(); err != nil {

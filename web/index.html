@@ -112,7 +112,12 @@ body {
   width: 3px; height: 16px; border-radius: 2px; background: var(--accent);
 }
 .nav-btn .ic { width: 18px; text-align: center; opacity: .9; }
-.sidebar .foot { margin-top: auto; padding: 10px 12px; color: var(--fg-2); font-size: 11.5px; line-height: 1.6; }
+/* 关于页的数据流示意：等宽 + 保留换行 + 窄屏横向滚动 */
+.pipe {
+  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: 12px; line-height: 1.75; color: var(--fg-2);
+  white-space: pre; overflow-x: auto; margin: 2px 0 0;
+}
 
 /* ── 主区 ── */
 .main { flex: 1; padding: 28px 32px 48px; max-width: 1120px; }
@@ -252,9 +257,7 @@ body.setup-mode #page-setup { padding-top: 12px; }
     <button class="nav-btn active" data-page="overview"><span class="ic">◧</span>概览</button>
     <button class="nav-btn" data-page="config"><span class="ic">⚙</span>配置</button>
     <button class="nav-btn" data-page="logs"><span class="ic">▤</span>日志</button>
-    <div class="foot">
-      <span id="ver">bdsync</span>
-    </div>
+    <button class="nav-btn" data-page="about"><span class="ic">ⓘ</span>关于</button>
   </nav>
 
   <main class="main">
@@ -356,8 +359,6 @@ body.setup-mode #page-setup { padding-top: 12px; }
             <div class="metric"><span class="k">运行时长</span><span class="v" id="m-uptime" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">内存 RSS</span><span class="v" id="m-rss" style="font-size:16px">—</span></div>
             <div class="metric"><span class="k">存活堆</span><span class="v" id="m-heap" style="font-size:16px">—</span></div>
-            <div class="metric" style="grid-column:1/-1"><span class="k">版本</span>
-              <div style="font-size:13.5px; font-weight:550" id="m-ver">—</div></div>
           </div>
         </div>
         <div class="card">
@@ -462,6 +463,121 @@ body.setup-mode #page-setup { padding-top: 12px; }
         <div id="logpane"><span class="empty">等待日志…</span></div>
       </div>
     </section>
+
+    <!-- 关于 -->
+    <section class="page" id="page-about">
+      <h1>关于</h1>
+      <p class="sub">bdsync —— 本地目录单向备份到百度网盘的常驻守护进程 <span class="chip" id="ver">bdsync</span></p>
+
+      <div class="card">
+        <h2>它做什么</h2>
+        <div class="hintline" style="margin-top:0">
+          把一个本地目录的变化，持续、增量、低噪声地复制到网盘的对应目录。
+          方向<b>只出不进</b>：本地新增/修改会上传，本地删除与改名会同步到远端；
+          而网盘侧被别的客户端改动的文件，本软件只归档、不删除 —— 备份目录不该由备份工具单方面清空。
+        </div>
+      </div>
+
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card">
+          <h2>主要功能</h2>
+          <div class="hintline" style="margin-top:0">
+            · <b>增量</b>：稳态下只处理真实变更，不重扫、不重算哈希、不重传<br>
+            · <b>镜像</b>：远端清单永远 ≡ 本地清单（含删除与改名传播）<br>
+            · <b>远端历史</b>：任何会被镜像销毁的旧版本先归档进 <code>.history/</code>，默认留 90 天<br>
+            · <b>秒传优先</b>：网盘已有相同文件时零带宽完成<br>
+            · <b>断点续传</b>：分片进度持久化，中断后只补缺失的块<br>
+            · <b>崩溃安全</b>：队列落 SQLite，检测结果即刻持久化，断电不丢已检测到的变更<br>
+            · <b>低噪声</b>：空闲态 CPU ≈ 0%，内存 &lt; 30 MB，磁盘不休眠唤醒<br>
+            · <b>看板</b>：状态/队列/日志实时查看，可暂停、继续、停止
+          </div>
+        </div>
+        <div class="card">
+          <h2>明确不做</h2>
+          <div class="hintline" style="margin-top:0">
+            · <b>网络盘 / 网络共享</b>：网络挂载上无法可靠检测变更，启动时校验，不符合直接拒绝运行<br>
+            · <b>双向同步 / 冲突合并</b>：复杂度高得多，备份场景不需要<br>
+            · <b>裸删除</b>：删除与覆盖一律先归档，不做「不归档就删远端」<br>
+            · <b>图形界面</b>：用 CLI + 本地看板，零 GUI 依赖<br>
+            · <b>对外暴露的服务</b>：看板只监听回环地址，且默认关闭
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>核心逻辑 · 数据怎么流动</h2>
+        <pre class="pipe">  Detector                SQLite (WAL)              Sender
+  ─────────                ───────────              ──────
+  Windows NTFS ─┐
+                ├─ 只碰本地元数据 ──▶ entry 表          ┌─▶ 预建目录
+  其他本地 FS  ─┘   与索引 diff       + pending 状态     │   秒传探测
+                    (size, mtime)      kv 表（游标）     │   分片上传
+                        │                  ▲            │   AIMD 限流
+                        │ 写入（零网络）    │ 批量领取     │   回写索引
+                        └──────────▶ 崩溃安全边界 ◀──────┘
+                                                   ▼
+                                            百度网盘 API</pre>
+        <div class="hintline">
+          Detector 与 Sender 之间<b>只有 SQLite</b>，没有任何内存队列或 channel。
+          这条边界同时买下三样东西：检测耗时与网络状况彻底解耦（检测永远不会卡在网速上）、
+          断电后已检测到的变更不丢、两边可以各自独立演进。
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>四条设计原则</h2>
+        <div class="grid g2s" style="gap:12px 18px; margin-top:0">
+          <div class="metric"><span class="k">P1 · 检测与发送彻底解耦</span>
+            <div style="font-size:12.5px; color:var(--fg-2); margin-top:2px">检测只碰本地元数据，绝不因网络阻塞</div></div>
+          <div class="metric"><span class="k">P2 · 无变更时绝对空闲</span>
+            <div style="font-size:12.5px; color:var(--fg-2); margin-top:2px">没活干时不消耗任何 CPU 与磁盘 IO</div></div>
+          <div class="metric"><span class="k">P3 · 状态可持久化</span>
+            <div style="font-size:12.5px; color:var(--fg-2); margin-top:2px">批处理不产生数据丢失风险</div></div>
+          <div class="metric"><span class="k">P4 · 只支持本地固定磁盘</span>
+            <div style="font-size:12.5px; color:var(--fg-2); margin-top:2px">网络盘上无法可靠检测变更，启动即校验</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>几个关键机制</h2>
+        <div class="hintline" style="margin-top:0">
+          · <b>稳定性闸门</b>：大量软件会写文件（下载中的视频、数据库、Office 临时文件）。
+          正在被写的文件传上去就是坏数据 —— 发送前重新 <code>stat</code>，<code>(size, mtime)</code>
+          变了就退回队列，<b>不计为错误</b>。<br>
+          · <b>水位 + 间隔 双触发</b>：到点才排空，但积压超过高水位立即触发不等间隔；
+          排空一旦开始就持续到低水位（work-conserving），而不是「5 分钟内传完」——
+          否则几万文件的首次同步会变成每 5 分钟猛冲一次然后被限流打断。<br>
+          · <b>AIMD 自适应并发</b>：连续成功缓慢加并发，遇限流立即减半并退避；
+          退避带 full jitter，否则十几个 worker 同时重试就是惊群，能把账号打死。<br>
+          · <b>错误分类</b>：登录过期立即停机告警；<code>31079</code> 秒传失败降级为普通上传
+          —— 那不是错误；网络错误才退避重试。<br>
+          · <b>宁可多传，不漏传</b>：所有不确定情况一律偏向重传。多传浪费一次带宽，跳过是数据丢失。
+        </div>
+      </div>
+
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card">
+          <h2>检测后端</h2>
+          <div class="hintline" style="margin-top:0">
+            Windows 本地 NTFS 走 <b>USN Journal</b>（无损、可验证，空闲时零文件打开、
+            零磁盘唤醒）；其他本地文件系统走 <b>WalkDir</b> 全量扫描，
+            天然完整，是所有平台的基线与降级路径。
+          </div>
+        </div>
+        <div class="card">
+          <h2>常驻方式</h2>
+          <div class="hintline" style="margin-top:0">
+            就地便携：<code>exe</code> + <code>bdsync.yaml</code> + <code>index.db</code> + 凭据 + <code>logs/</code>
+            在同一文件夹，整体搬走即可。可用任务计划程序 / nssm / systemd 托管，
+            停止走 SIGINT/SIGTERM。
+          </div>
+        </div>
+      </div>
+
+      <div class="hintline" style="margin-top:20px; text-align:center">
+        完整设计推导、实测数据与决策记录见仓库根目录的 <code>design.md</code> —— 本页是它的精简版。
+      </div>
+    </section>
   </main>
 </div>
 
@@ -472,12 +588,13 @@ let logSeq = -1, paused = false, stopping = false, lastStatusAt = 0, es = null;
 
 /* ── 路由（hash）：页面归属的唯一真相 ──
    之前用"点按钮就 toggle class"，导致多页可能同时 active（轮询一冲就重演）。
-   现在 URL 即状态：#/overview #/config #/logs，刷新/前进后退都对得上。
+   现在 URL 即状态：#/overview #/config #/logs #/about，刷新/前进后退都对得上。
    （旧链接 #/control 仍兼容：运行控制已并入概览 → 自动落到 #/overview） */
 const ROUTES = {
   overview: "概览",
   config: "配置",
   logs: "日志",
+  about: "关于",
 };
 let currentRoute = null;
 
@@ -574,7 +691,8 @@ function renderStatus(s) {
   $("m-root").textContent = s.root ?? "—";
   $("m-remote").textContent = s.remote ?? "—";
   $("m-db").textContent = s.db_path ?? "—";
-  $("m-ver").textContent = $("ver").textContent = s.version ?? "bdsync";
+  // 版本号只渲染在「关于」页；m-ver 已随概览页的运行环境卡一起移除，别再引用
+  $("ver").textContent = s.version ?? "bdsync";
 
   $("btn-pause").disabled = paused || stopped;
   $("btn-resume").disabled = !paused || stopped;

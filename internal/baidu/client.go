@@ -17,6 +17,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -377,6 +378,23 @@ func (c *Client) List(remotePath string) ([]FileInfo, error) {
 		})
 	}
 	return out, nil
+}
+
+// IsEmpty — 远端目录是否为空（既无文件也无子目录）。
+// 用于归档后清理变空的目录（design §9.2「空目录移除」）。
+func (c *Client) IsEmpty(remotePath string) (bool, error) {
+	items, err := c.List(remotePath)
+	if err != nil {
+		return false, err
+	}
+	for _, it := range items {
+		switch path.Base(it.Path) {
+		case ".", "..": // 防御：某些后端会把这两个也列进来
+			continue
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // Meta — 查询远端文件元信息。
