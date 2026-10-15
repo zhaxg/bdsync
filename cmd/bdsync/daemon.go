@@ -36,7 +36,9 @@ import (
 var version = defaultVersion
 
 // defaultVersion -- 未注入时的兜底版本号（开发态）。
-const defaultVersion = "v0.6-web"
+// 发布构建由 CI 用 -ldflags "-X main.version=$TAG" 覆盖成真实 tag，
+// 所以这里只需要跟得上节奏，别让本地 go build 出来的 exe 显示过时的版本。
+const defaultVersion = "v0.7.2"
 
 // quietHeartbeat -- 静默期心跳间隔。
 //
