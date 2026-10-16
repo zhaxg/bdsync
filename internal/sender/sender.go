@@ -135,6 +135,20 @@ func (s *Stats) apply(f func(*Stats)) {
 	s.mu.Unlock()
 }
 
+// fatal / claimed -- 主 goroutine 读这两个字段必须走 getter：字段由 worker
+// 在 apply 内写入，裸读在 -race 下是数据竞争，也会让限流计数读到过期值。
+func (s *Stats) fatal() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.FatalError
+}
+
+func (s *Stats) claimed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Claimed
+}
+
 // Snapshot -- 取一份无锁快照（逐字段拷贝，避免复制 mutex）。
 func (s *Stats) Snapshot() Stats {
 	s.mu.Lock()
@@ -310,7 +324,7 @@ func (s *Sender) Drain(ctx context.Context, maxFiles int) (*Stats, error) {
 	}
 
 	for {
-		if stats.FatalError != nil {
+		if stats.fatal() != nil {
 			break
 		}
 		if err := ctx.Err(); err != nil {
@@ -322,7 +336,7 @@ func (s *Sender) Drain(ctx context.Context, maxFiles int) (*Stats, error) {
 			claimSize = 8
 		}
 		if maxFiles > 0 {
-			remain := maxFiles - stats.Claimed
+			remain := maxFiles - stats.claimed()
 			if remain <= 0 {
 				break
 			}
@@ -510,8 +524,16 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	remotePath := path.Join(s.remoteRoot, e.RelPath)
 
 	finish := func(fi *baidu.FileInfo, rapid bool) Action {
-		if err := s.st.FinishUpload(ctx, e.RelPath, fi.FsID, fi.Size, fi.Mtime, fi.MD5); err != nil {
+		applied, err := s.st.FinishUpload(ctx, e, fi.FsID, fi.Size, fi.Mtime, fi.MD5)
+		if err != nil {
 			s.logf("[!] 回写索引失败 %s: %v", e.RelPath, err)
+		}
+		if !applied {
+			// 上传期间本地又被改了：保留 Detector 写入的新状态，下轮重传。
+			// 这不是失败，但必须留痕 ---- 否则就是一次静默漏备份。
+			stats.apply(func(st *Stats) { st.Deferred++ })
+			s.logf("[~] %s 上传期间本地已变更，保留新版本待下轮重传", e.RelPath)
+			return ActionDeferred
 		}
 		if rapid {
 			stats.apply(func(st *Stats) { st.RapidOK++ })
@@ -528,7 +550,9 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 			s.lim.onRateLimit()
 		}
 		stats.apply(func(st *Stats) { st.Failed++ })
-		s.st.FailUpload(ctx, e.RelPath, err.Error())
+		if _, ferr := s.st.FailUpload(ctx, e, err.Error()); ferr != nil {
+			s.logf("[!] 记录失败状态出错 %s: %v", e.RelPath, ferr)
+		}
 		s.logf("[-] %s: %v", e.RelPath, err)
 		return action
 	}
@@ -543,7 +567,9 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	info, err := os.Stat(full)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.st.MarkMissing(ctx, 0, []string{e.RelPath})
+			if _, merr := s.st.MarkMissing(ctx, 0, []string{e.RelPath}); merr != nil {
+				s.logf("[!] 标记本地已删失败 %s: %v", e.RelPath, merr)
+			}
 			stats.apply(func(st *Stats) { st.RemoteHave++ })
 			s.logf("[x] %s 本地已删除，跳过（远端旧版本保留）", e.RelPath)
 			return ActionDone
@@ -616,17 +642,18 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	}
 	contentMD5 := hex.EncodeToString(lfc.MD5)
 	sliceMD5 := hex.EncodeToString(lfc.SliceMD5)
-	if contentMD5 == "" && lfc.Length == 0 {
-		// 空文件：checksum 包对 0 字节可能不产出 MD5，用标准空内容 md5 兜底
-		contentMD5 = baidupcs.EmptyContentMD5
+	// 0 字节文件已在上面单独处理并 return，这里 lfc.Length 必 > 0
+	if err := s.st.SetLocalMD5(ctx, e.RelPath, contentMD5); err != nil {
+		s.logf("[!] 本地 md5 落库失败 %s: %v", e.RelPath, err)
 	}
-	s.st.SetLocalMD5(ctx, e.RelPath, contentMD5)
 
 	// ── 3. 秒传V2（design §7 步骤3）──
 	uk, err := s.bc.UK()
 	if err != nil {
 		stats.apply(func(st *Stats) { st.FatalError = err })
-		s.st.FailUpload(ctx, e.RelPath, err.Error())
+		if _, ferr := s.st.FailUpload(ctx, e, err.Error()); ferr != nil {
+			s.logf("[!] 记录失败状态出错 %s: %v", e.RelPath, ferr)
+		}
 		return ActionFatal
 	}
 	dataTime := time.Now().Unix()
@@ -684,7 +711,9 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 				a := Classify(rerr)
 				if a == ActionFatal {
 					stats.apply(func(st *Stats) { st.FatalError = rerr })
-					s.st.FailUpload(ctx, e.RelPath, rerr.Error())
+					if _, ferr := s.st.FailUpload(ctx, e, rerr.Error()); ferr != nil {
+						s.logf("[!] 记录失败状态出错 %s: %v", e.RelPath, ferr)
+					}
 					return ActionFatal
 				}
 				if a == ActionRetry {
@@ -734,9 +763,17 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 		}
 
 		var blockErr error
+		cancelled := false
 		for seq := 0; seq < len(lfc.BlocksList); seq++ {
 			if doneSet[seq] {
 				continue
+			}
+			// 取消必须能中断在途大文件：否则关停/致命错误后单个文件仍会跑完
+			// 整段分片（最长数十分钟），ActionFatal 的 cancel 形同虚设。
+			// 已传分片留在库里，下次同会话可续传。
+			if err := ctx.Err(); err != nil {
+				cancelled = true
+				break
 			}
 			off := int64(seq) * blockSize
 			length := min64(blockSize, lfc.Length-off)
@@ -751,8 +788,15 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 				break
 			}
 			checksumMap[seq] = lfc.BlocksList[seq]
+			// 必须同步回内存：只落库不回写 doneSet 的话，本次重试仍从 seq 0 重传
+			doneSet[seq] = true
 			// 断点进度持久化（design §7）：崩溃后同会话可续
 			s.persistProgress(ctx, e.RelPath, uploadID, checksumMap)
+		}
+		if cancelled {
+			// 取消：退回队列并保留已传分片（下次同会话续传），不当作失败计数
+			s.st.DeferEntry(ctx, e.RelPath)
+			return ActionDeferred
 		}
 		if blockErr != nil {
 			s.logf("[!] %s 分片上传失败(第%d次): %v", e.RelPath, attempt, blockErr)
@@ -792,7 +836,7 @@ func (s *Sender) uploadOne(ctx context.Context, e index.PendingEntry, stats *Sta
 	}
 
 	// 单文件重试耗尽
-	s.st.FailUpload(ctx, e.RelPath, fmt.Sprintf("重试耗尽（%d 次）", s.maxAttempt))
+	s.st.FailUpload(ctx, e, fmt.Sprintf("重试耗尽（%d 次）", s.maxAttempt))
 	stats.apply(func(st *Stats) { st.Failed++ })
 	s.logf("[-] %s: 重试耗尽", e.RelPath)
 	return ActionFail
@@ -809,7 +853,9 @@ func (s *Sender) persistProgress(ctx context.Context, relPath, uploadID string, 
 	if err != nil {
 		return
 	}
-	s.st.SaveProgress(ctx, relPath, uploadID, string(b))
+	if err := s.st.SaveProgress(ctx, relPath, uploadID, string(b)); err != nil {
+		s.logf("[!] 断点进度落盘失败 %s: %v", relPath, err)
+	}
 }
 
 // rapidInfo -- 秒传响应信息 → 写回用 FileInfo；缺失字段用本地值兜底。

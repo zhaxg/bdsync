@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"bdsync/internal/baidu"
 	"bdsync/internal/config"
 	"bdsync/internal/detector"
 	"bdsync/internal/index"
@@ -522,7 +523,7 @@ func (s *setupState) startService(parent context.Context) {
 	go func() {
 		trace("runService goroutine: 开始")
 		errCh <- runService(ctx, cancel, cfg, serviceOpts{
-			AppID:  266719,
+			AppID:  baidu.DefaultAppID, // 与命令行入口保持同一来源，避免两处 app_id 漂移
 			Hub:    setupHub,
 			WebSrv: s.srv, // 复用向导阶段就已监听的看板
 			OnReady: func(rt *runtimeState, st *index.Store) {

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -213,6 +214,13 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("看板监听 %s 失败: %w", s.addr, err)
 	}
+	// 硬性约束：只监听回环。配置若写成 ":8787" 或 "0.0.0.0:8787"，
+	// net.Listen 会静默绑到全网卡，把带凭据管理能力的看板暴露到局域网
+	// ---- 这里在真正开始 Serve 之前拦下，不依赖配置校验。
+	if a, ok := ln.Addr().(*net.TCPAddr); !ok || !a.IP.IsLoopback() {
+		_ = ln.Close()
+		return fmt.Errorf("看板只允许监听回环地址，当前地址 %q 会暴露到非本机网络", s.addr)
+	}
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = s.srv.Serve(ln) }()
 	return nil
@@ -229,7 +237,22 @@ func (s *Server) Stop(ctx context.Context) error {
 // URL -- 展示用地址。
 func (s *Server) URL() string { return "http://" + s.addr + "/" }
 
-// withLocal -- 回环来源校验（纵深防御）+ 同源 Origin 校验（防跨站 POST）。
+// localHeader -- 非浏览器客户端（脚本/curl）调用写接口时用来替代 Origin 的自定义头。
+//
+// 浏览器跨源携带自定义头会触发 CORS 预检，而本服务不返回任何 CORS 允许头，
+// 预检必然失败 → 该头无法被恶意网页伪造。所以它既能放行脚本，又不削弱 CSRF 防护。
+const localHeader = "X-Bdsync-Local"
+
+// withLocal -- 回环来源校验 + Host 钉死 + 同源 Origin 校验（纵深防御）。
+//
+// 三层缺一不可，尤其第 2 层：
+//  1. RemoteAddr 必须回环 ---- 挡掉局域网直连，但**挡不住 DNS rebinding**：
+//     攻击者把 evil.com 解析到 127.0.0.1 后，请求同样经 127.0.0.1 进来；
+//  2. Host 必须是本看板地址 ---- 这才是 rebinding 的真正防线。rebinding 时
+//     请求的 Host 与 Origin 都是 evil.com:8787（自洽），只有把 Host 钉死在
+//     回环地址上才能识别出来；
+//  3. 写请求必须带同源 Origin（或 localHeader）---- 挡传统 CSRF。浏览器对
+//     非 GET/HEAD 的同源请求一定发送 Origin，故"无 Origin 的写请求"一律拒绝。
 func (s *Server) withLocal(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -237,12 +260,28 @@ func (s *Server) withLocal(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if origin := r.Header.Get("Origin"); origin != "" {
-			if !strings.HasPrefix(origin, "http://"+r.Host) &&
-				!strings.HasPrefix(origin, "https://"+r.Host) {
+		if !s.allowedHost(r.Host) {
+			http.Error(w, "bad host", http.StatusForbidden)
+			return
+		}
+		sameHTTP := "http://" + r.Host
+		sameHTTPS := "https://" + r.Host
+		origin := r.Header.Get("Origin")
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			// GET 只在带了跨源 Origin 时拒绝：同源 EventSource/fetch 的响应
+			// 本来就受同源策略保护，读不到内容。
+			if origin != "" && origin != sameHTTP && origin != sameHTTPS {
 				http.Error(w, "cross-origin forbidden", http.StatusForbidden)
 				return
 			}
+		} else if origin != sameHTTP && origin != sameHTTPS && r.Header.Get(localHeader) == "" &&
+			r.Header.Get("Sec-Fetch-Site") != "same-origin" {
+			// 第三道兜底用 Sec-Fetch-Site：它由浏览器强制写入、页面无法伪造。
+			// 注意它**不能**替代上面的 Host 校验 ---- rebinding 场景下它同样是
+			// same-origin，只是用来兜住"某些客户端对同源 POST 不带 Origin"
+			// 的情况，避免把正常的看板写操作误伤成 403。
+			http.Error(w, "cross-origin forbidden", http.StatusForbidden)
+			return
 		}
 		// 兜底：看板是"配置失败也必须活着"的那一环，任何 handler 的 panic
 		// 都不能把进程带走（否则浏览器只会看到 Failed to fetch，人完全懵）。
@@ -259,11 +298,34 @@ func (s *Server) withLocal(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func isLoopback(host string) bool {
-	if host == "localhost" || host == "::1" || host == "" {
+	// 空主机名不再放行：RemoteAddr/Host 解析出空串属异常输入，
+	// 放过它等于给校验留一个"看似通过"的缺口。
+	if strings.EqualFold(host, "localhost") || host == "::1" {
 		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// allowedHost -- r.Host 必须等价于本看板的监听地址（见 withLocal 第 2 层）。
+func (s *Server) allowedHost(hostport string) bool {
+	h, p, err := net.SplitHostPort(hostport)
+	if err != nil {
+		// 无端口（浏览器可能省略默认端口）：整体当主机名处理
+		h, p = hostport, ""
+	}
+	if want := s.listenPort(); want != "" && p != "" && p != want {
+		return false
+	}
+	return isLoopback(h)
+}
+
+// listenPort -- 从监听地址提取端口（"127.0.0.1:8787" → "8787"）。
+func (s *Server) listenPort() string {
+	if _, p, err := net.SplitHostPort(s.addr); err == nil {
+		return p
+	}
+	return ""
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -420,11 +482,22 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 // handleSetupProbe -- 检测本地目录是否存在、可读（向导里的"检测"按钮）。
 func (s *Server) handleSetupProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
 	if s.setup == nil || s.setup.Probe == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "当前模式不支持检测"})
 		return
 	}
-	files, dirs, err := s.setup.Probe(r.URL.Query().Get("root"))
+	// 只接受绝对路径（向导填的是本地目录），拒绝空值与相对路径：
+	// 该接口会把可读性与规模回报给调用方，收窄输入面即收窄信息泄露面。
+	root := r.URL.Query().Get("root")
+	if root == "" || !filepath.IsAbs(root) {
+		writeJSON(w, map[string]any{"ok": false, "error": "请提供绝对路径"})
+		return
+	}
+	files, dirs, err := s.setup.Probe(root)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return

@@ -6,6 +6,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,6 +64,11 @@ func Clone(c *Config) *Config {
 }
 
 // ApplyMap -- 将嵌套 settings 映射合并进已有配置（YAML 语义：只覆盖出现的键）。
+//
+// 这里**故意不启用严格模式**：入参来自看板「基本字段」表单（daemon.configSave），
+// 走 map 中转只是为了复用 YAML 的"只覆盖出现的键"语义，本函数是通用导出接口，
+// 对入参键集不做假设；若开严格模式，调用方传入的扩展/暂未识别键会直接变成硬错误，
+// 破坏看板正向保存流程。拼写错误由 Load / Parse 两个入口负责拦截。
 func ApplyMap(cfg *Config, m map[string]any) error {
 	b, err := yaml.Marshal(m)
 	if err != nil {
@@ -160,7 +166,8 @@ func formatDuration(ns int64) string {
 
 // ParseByteSize -- "512MB" / "2GB" / "1048576"。
 func ParseByteSize(s string) (int64, error) {
-	s = strings.TrimSpace(strings.ToUpper(s))
+	orig := strings.TrimSpace(s)
+	s = strings.ToUpper(orig)
 	mult := int64(1)
 	for _, m := range []struct {
 		suf string
@@ -178,6 +185,11 @@ func ParseByteSize(s string) (int64, error) {
 	n, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {
 		return 0, err
+	}
+	// 负值没有合法语义（高水位、文件上限等都是"越大越晚触发"），
+	// 一旦混进来会让阈值判断整体失效，必须在解析处就拒绝。
+	if n < 0 {
+		return 0, fmt.Errorf("大小不能为负：%q", orig)
 	}
 	return int64(n * float64(mult)), nil
 }
@@ -206,6 +218,11 @@ type MirrorConfig struct {
 	HistoryDays     int      `yaml:"history_days"`     // 保留期；0 = 永久保留
 	OnRename        string   `yaml:"on_rename"`        // mv（远端直接改名）| history（归档+重传）
 	RemoteReconcile Duration `yaml:"remote_reconcile"` // 远端清单对账周期（多余路径 → 归档）
+
+	// historyDaysSet -- mirror.history_days 是否**在原始 YAML 中显式出现**。
+	// 非导出：不参与 yaml.Marshal，也不对外暴露。用来把「用户显式写了」
+	// 与「用户没写、取的是 Default() 预填值」区分开（数值可能一样，意图不同）。
+	historyDaysSet bool
 }
 
 type DetectorConfig struct {
@@ -229,35 +246,51 @@ type QuotaConfig struct {
 	IdleThreshold Duration `yaml:"idle_threshold"`
 	// HistoryDays -- 远端历史保留天数。**权威副本在 Mirror.HistoryDays**；
 	// 这里只是让它能写在 idle_threshold 旁边（都是"多久"类旋钮，挤在一起更好找）。
-	// yaml 非 strict：写在 quota 下也能解析进来，normalizeHistoryDays() 会把它同步回 Mirror。
+	// 它是结构体已知字段，故严格模式下也能解析进来；normalizeHistoryDays() 负责同步回 Mirror。
 	HistoryDays  int `yaml:"history_days"`
 	QuietCPUCap  int `yaml:"quiet_cpu_cap"`  // %
 	ActiveCPUCap int `yaml:"active_cpu_cap"` // %
 }
+
+// defaultHistoryDays -- Default() 预填的保留期（两处都没写时生效）。
+const defaultHistoryDays = 90
 
 // normalizeHistoryDays -- 抹平 history_days 的两个位置。
 //
 // 为什么需要：yaml.v3 默认非 strict，写在 quota: 下的 history_days 若不显式接收会被
 // **静默丢弃**（不报错、不生效）----用户以为改了其实没改。这里让两处都能写，
 // 且以 Mirror.HistoryDays 为准（它是真正的消费者，PruneHistory 读的就是它）。
-// defaultHistoryDays -- Default() 预填的保留期。
 //
-// 单独留一个常量，是因为 normalizeHistoryDays 靠它区分
-// 「用户在 mirror: 下显式写了 90」和「用户没写、用的是默认值 90」----
-// 两者数值相同却是不同的意图，不区分就没法定优先级。
-const defaultHistoryDays = 90
-
+// 优先级判据用「键是否显式出现」（historyDaysSet）而非「值是否 ≠ 默认值」：
+// 后者会把用户在 mirror 下显式写的 0（永久保留）或恰好等于默认值的 90 误判成"没写"，
+// 继而被 quota.history_days 静默覆盖。historyDaysSet 由 Load / Parse 解出原始 YAML 后置位。
 func (c *Config) normalizeHistoryDays() {
-	// Mirror 是权威副本（PruneHistory 读的就是它）。但 Default() 预填了
-	// defaultHistoryDays，所以「Mirror 仍是默认值」实际含义是「用户没在 mirror 下写过」。
-	// 优先级：Mirror 显式写过（!=默认值或 !=0）→ 用它；否则退到 Quota；再否则保持默认。
 	switch {
-	case c.Mirror.HistoryDays != defaultHistoryDays && c.Mirror.HistoryDays > 0:
-		// Mirror 显式设置过 → 保持权威
+	case c.Mirror.historyDaysSet:
+		// mirror 下显式写过 history_days（含 0=永久保留、或恰好等于默认值 90）→ 以它为准
 	case c.Quota.HistoryDays > 0:
+		// mirror 未写、quota 写了正值 → 退到 quota
 		c.Mirror.HistoryDays = c.Quota.HistoryDays
 	}
 	c.Quota.HistoryDays = c.Mirror.HistoryDays // 回写，保证两处显示一致
+}
+
+// yamlKeyPresent -- 判断原始 YAML 中 section.key 是否**显式出现**。
+//
+// 与「值等于默认值」不同：用于区分「用户显式写了」与「取的是 Default() 预填值」，
+// 二者数值可能完全相同但意图不同（见 normalizeHistoryDays）。
+// 解析失败时不报错（正式解码处会报），这里只做尽力探测。
+func yamlKeyPresent(data []byte, section, key string) bool {
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	sec, ok := m[section].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = sec[key]
+	return ok
 }
 
 type PolicyConfig struct {
@@ -350,9 +383,15 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取配置失败: %w", err)
 	}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	// 严格模式：拼错的键（如 flush_bytez）必须报错，而不是被静默忽略。
+	// 静默忽略的代价是"用户以为改了，其实没改"----比启动失败难查得多。
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("解析配置 %s 失败: %w", path, err)
 	}
+	// history_days 优先级看「键是否显式出现」而非值大小（详见 normalizeHistoryDays）
+	cfg.Mirror.historyDaysSet = yamlKeyPresent(data, "mirror", "history_days")
 	cfg.normalizeHistoryDays()
 	// 相对路径以**配置文件所在目录**为基准（不是 CWD）----
 	// 这样"exe + bdsync.yaml + var/"整个文件夹可以放任意位置、从任意目录启动。
@@ -427,6 +466,11 @@ func (c *Config) Validate() error {
 	if c.Sender.Concurrency < 0 {
 		return fmt.Errorf("sender.concurrency 不能为负")
 	}
+	// flush_bytes 是高水位：<=0 会让"队列超此立即触发"永不成立（或立即触发），
+	// 静默改变发送节奏，启动时就拦住。
+	if c.Sender.FlushBytes <= 0 {
+		return fmt.Errorf("sender.flush_bytes 必须大于 0，得到 %d", c.Sender.FlushBytes.Int64())
+	}
 	// 镜像模式（design 增补：镜像+历史）
 	switch c.Mirror.OnRename {
 	case "mv", "history", "":
@@ -471,9 +515,13 @@ func validateLoopbackAddr(addr string) error {
 // Parse -- 解析 YAML 字节（Web 配置保存接口用；含校验）。
 func Parse(data []byte) (*Config, error) {
 	cfg := Default()
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	// 与 Load 一致：看板「YAML 全文」保存入口同样启用严格模式，拦住拼错的键。
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("YAML 解析失败: %w", err)
 	}
+	cfg.Mirror.historyDaysSet = yamlKeyPresent(data, "mirror", "history_days")
 	cfg.normalizeHistoryDays()
 	if err := cfg.Validate(); err != nil {
 		return nil, err

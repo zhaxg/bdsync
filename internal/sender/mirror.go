@@ -31,9 +31,22 @@ import (
 //	srcRel：远端源路径（改名后又删除的行，源还在改名前的位置）
 //
 // 返回是否确实发生了移动。
+// 对账护栏阈值：清单外条目超过 max(reconcileGuardMin, ratio×远端总数) 即中止归档。
+const (
+	reconcileGuardMin   = 20
+	reconcileGuardRatio = 0.5
+)
+
 func (s *Sender) archiveRemote(ctx context.Context, targetBaseRel, srcRel string, rMtime int64) (bool, error) {
 	if !s.mirrorOn || s.historyDir == "" {
 		return false, nil
+	}
+	// 远端 mtime 缺失（0）时不能拿 "@0" 当版本身份：同名文件的不同版本会全部
+	// 撞到同一个目标名，而下面的幂等检查"目标存在即视为已归档"会因此误判，
+	// 变成"旧版本其实没归档却被清掉记账"。改用当前时间兜底 ---- 宁可留下重复
+	// 归档（源已移走时第二次会因源不存在而无害返回），也不要静默丢版本。
+	if rMtime <= 0 {
+		rMtime = time.Now().Unix()
 	}
 	src := path.Join(s.remoteRoot, srcRel)
 	date := historyDateBucket()
@@ -181,6 +194,12 @@ func (s *Sender) pruneEmptyDirs(ctx context.Context, seeds map[string]bool) int 
 			}
 			if !empty {
 				break // 这层还有内容 → 不必再看它的祖先
+			}
+			// 删前复核：Remove 对目录是递归删除，而"检查为空"与"执行删除"之间
+			// 若网盘侧（手机/网页端）刚放入文件，就会被一起删掉。复核只能缩小这个
+			// 窗口、无法原子消除 ---- 已知残余风险，见 docs/design.md 的运维答疑。
+			if again, rerr := s.bc.IsEmpty(full); rerr != nil || !again {
+				break
 			}
 			if err := s.bc.Remove(full); err != nil {
 				if !baidu.RemoteMissing(err) {
@@ -531,6 +550,24 @@ func (s *Sender) ReconcileRemote(ctx context.Context, dryRun bool) (*ReconcileRe
 		}
 		if !covered {
 			collapsed = append(collapsed, d)
+		}
+	}
+
+	// ── 归档护栏：清单外占比过高即中止 ──
+	// 对账以本地清单为唯一真值来源，而索引异常（库损坏、pair 未初始化、检测未
+	// 跑完）会让清单突然变短 ---- 此时"忠实地"把整棵主树搬进 .history 就是一次
+	// 运维事故（recovery_live_test.go 记录过真实先例：M3 曾把主树全部误归档）。
+	// 超阈值直接失败返回，**不**静默降级为 dry-run ---- 否则故障会长期潜伏。
+	cand := res.Files + res.Dirs
+	victims := len(unknownFiles) + len(collapsed)
+	if victims > reconcileGuardMin && float64(victims) > reconcileGuardRatio*float64(cand) {
+		if dryRun {
+			s.logf("[对账] 警告：清单外条目 %d/%d 超过半数，真实执行会被护栏拦下（疑似索引异常）", victims, cand)
+		} else {
+			return res, fmt.Errorf(
+				"对账护栏触发：清单外条目 %d/%d 超过半数，已中止归档。"+
+					"这通常意味着本地清单不完整（索引异常），请先执行 check 再对账，避免主树被整体搬入 .history",
+				victims, cand)
 		}
 	}
 

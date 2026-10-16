@@ -215,6 +215,9 @@ func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 			Size: size, MtimeNs: mtime, State: index.StateConflict, Err: msg})
 	}
 
+	// walkIncomplete -- 本轮有子树被跳过（权限等）。这类遍历**不能**用来推导
+	// "本地已删除"：整棵树都不会进 seen，删除判定会把它们全部误标 REMOVED_LOCAL。
+	walkIncomplete := false
 	walkErr := filepath.WalkDir(walkRoot, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			if path == walkRoot {
@@ -223,6 +226,7 @@ func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 			res.Skipped++
 			res.noteErr(err)
 			if de != nil && de.IsDir() {
+				walkIncomplete = true
 				return fs.SkipDir // 整个子树不可读（权限等）：跳过，不中断
 			}
 			return nil
@@ -381,18 +385,25 @@ func (p *Poll) ScanAll(ctx context.Context, runID int64) (*ScanResult, error) {
 	}
 
 	// 删除判定：本轮没见到的 = 本地已删（远端保留，design §9.2）。
-	// 只有遍历完整（walkErr == nil）才允许做 ---- 半途而废的扫描不能产生删除结论。
+	// 两道前提缺一不可：遍历未中断（walkErr == nil，见上）、且没有子树被跳过
+	// （walkIncomplete）。后者是权限抖动导致整棵树不进 seen 的场景 ---- 若照样
+	// 判定删除，一次抖动就会把整棵子树的文件误标 REMOVED_LOCAL。
+	// 注意这里只跳过删除判定，本轮检测到的变更仍照常提交（见下方 CommitBatch）。
 	var missing []string
-	for rel, rec := range snap {
-		if _, ok := seen[rel]; ok {
-			continue
+	if walkIncomplete {
+		res.noteErr(fmt.Errorf("有子树不可读，本轮跳过删除判定（跳过 %d 项）", res.Skipped))
+	} else {
+		for rel, rec := range snap {
+			if _, ok := seen[rel]; ok {
+				continue
+			}
+			if rec.State == index.StateRemovedLocal {
+				continue // 已经是删除态，不用重复写
+			}
+			// 注：CONFLICT 行在其仍存在时必被 seen（冲突处理里标记），走到这里
+			// 说明文件已删除 → 正常降级 REMOVED_LOCAL，不留陈旧拦截记录。
+			missing = append(missing, rel)
 		}
-		if rec.State == index.StateRemovedLocal {
-			continue // 已经是删除态，不用重复写
-		}
-		// 注：CONFLICT 行在其仍存在时必被 seen（冲突处理里标记），走到这里
-		// 说明文件已删除 → 正常降级 REMOVED_LOCAL，不留陈旧拦截记录。
-		missing = append(missing, rel)
 	}
 	res.Removed = int64(len(missing))
 	if len(missing) > 0 {

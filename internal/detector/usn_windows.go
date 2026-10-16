@@ -26,8 +26,14 @@ import (
 
 // FSCTL 与 Reason 位（winioctl.h，见 design 附录 A）
 const (
-	fsctlUsnReadJournal = 0x000900BB
-	fsctlReadUsnJournal = 0x000900A4
+	// winioctl.h：CTL_CODE(FILE_DEVICE_FILE_SYSTEM, F, METHOD_*, FILE_ANY_ACCESS)
+	//   FSCTL_QUERY_USN_JOURNAL = 0x900F4 ---- 只查日志元数据，输入缓冲为空
+	//   FSCTL_READ_USN_JOURNAL  = 0x900BB ---- 读记录，输入是 READ_USN_JOURNAL_DATA_V0
+	// 两者不可混用：READ_USN_JOURNAL 要求 40 字节输入结构，用空输入调用会直接返回
+	// ERROR_INVALID_USER_BUFFER。此处曾把两个常量写反，导致元数据查询在启动时就
+	// 失败、整个进程永久降级为 poll（"usn 零唤醒"这一设计前提实际从未生效）。
+	fsctlQueryUsnJournal = 0x000900F4
+	fsctlReadUsnJournal  = 0x000900BB
 
 	reasonDataExtend    = 0x00000001
 	reasonDataOverwrite = 0x00000002
@@ -149,40 +155,42 @@ func OpenUsn(root string, st *index.Store) (*UsnBackend, error) {
 	return &UsnBackend{root: root, volPath: vol, rootRef: rootRef, h: h, store: st}, nil
 }
 
-// readMeta -- FSCTL_USN_READ_JOURNAL 取日志元数据（V2 含 JournalID，失败退 V0）。
+// readMeta -- FSCTL_QUERY_USN_JOURNAL 取日志元数据。
+//
+// 输出缓冲按 USN_JOURNAL_DATA_V2 的 88 字节留足（V2 在 V1 上追加字段）。
+// V0/V1/V2 的前 56 字节布局完全一致，且 **JournalID 从 V0 起就在 @0** ----
+// 不要把 @0 当成"V2 才有的 JournalID"而在低字节数分支里把它当 FirstUsn 读，
+// 那会让 JournalID 恒为 0，于是每一轮都命中"首次运行"分支、永不产出变更。
 func (u *UsnBackend) readMeta() (journalMeta, error) {
-	var out [64]byte
+	var out [128]byte
 	var returned uint32
-	err := syscall.DeviceIoControl(u.h, fsctlUsnReadJournal,
+	err := syscall.DeviceIoControl(u.h, fsctlQueryUsnJournal,
 		nil, 0, &out[0], uint32(len(out)), &returned, nil)
 	if err != nil {
-		return journalMeta{}, fmt.Errorf("FSCTL_USN_READ_JOURNAL: %w", err)
+		return journalMeta{}, fmt.Errorf("FSCTL_QUERY_USN_JOURNAL: %w", err)
 	}
 	le := binary.LittleEndian
-	if returned >= 60 {
-		return journalMeta{
-			JournalID:      le.Uint64(out[0:]),
-			FirstUsn:       le.Uint64(out[8:]),
-			NextUsn:        le.Uint64(out[16:]),
-			LowestValidUsn: le.Uint64(out[24:]),
-		}, nil
+	if returned < 56 {
+		return journalMeta{}, fmt.Errorf("journal 元数据过短: %d 字节", returned)
 	}
-	if returned >= 24 { // V0：无 JournalID
-		return journalMeta{
-			FirstUsn:       le.Uint64(out[0:]),
-			NextUsn:        le.Uint64(out[8:]),
-			LowestValidUsn: le.Uint64(out[16:]),
-		}, nil
-	}
-	return journalMeta{}, fmt.Errorf("journal 元数据过短: %d 字节", returned)
+	return journalMeta{
+		JournalID:      le.Uint64(out[0:]),
+		FirstUsn:       le.Uint64(out[8:]),
+		NextUsn:        le.Uint64(out[16:]),
+		LowestValidUsn: le.Uint64(out[24:]),
+	}, nil
 }
 
 // readBatch -- FSCTL_READ_USN_JOURNAL 从 startUsn 起读一批记录。
 func (u *UsnBackend) readBatch(startUsn, journalID uint64) (uint64, []usnRecord, error) {
-	var in [40]byte
-	le := binary.LittleEndian
 	// READ_USN_JOURNAL_DATA_V0: StartUsn@0, ReasonMask@8, ReturnOnlyOnClose@12,
-	// Timeout@16, BytesToWaitFor@24, UsnJournalID@32
+	// Timeout@16, BytesToWaitFor@24, UsnJournalID@32（共 40 字节）
+	//
+	// 用 make 堆分配而非栈数组：FSCTL_READ_USN_JOURNAL 是 METHOD_NEITHER，
+	// 驱动直接访问这块用户态内存并要求 8 字节对齐，而栈上的 [40]byte 只按 1 字节
+	// 对齐（数组元类型是 byte），可能被驱动以"用户缓冲无效"拒掉。
+	in := make([]byte, 40)
+	le := binary.LittleEndian
 	le.PutUint64(in[0:], startUsn)
 	le.PutUint32(in[8:], usnReasonMask)
 	le.PutUint64(in[32:], journalID)
@@ -222,23 +230,28 @@ func parseUsnRecords(b []byte) []usnRecord {
 		v4 := false
 		switch major {
 		case 2, 3:
-			ref = le.Uint64(rec[8:])
-			parent = le.Uint64(rec[16:])
+			// 长度校验必须在取值之前：recLen 只保证 ≥16，而 parent 需要 24 字节、
+			// 定长头需要 60 字节。先取值再校验会让 recLen∈[16,23] 的畸形记录直接
+			// panic（binary.Uint64 切片越界），把常驻守护进程带走。
 			if len(rec) < 60 {
-				break
+				b = b[recLen:]
+				continue
 			}
-			nameOff = int(le.Uint16(rec[58:]))
-			nameLen = int(le.Uint16(rec[56:]))
+			ref = le.Uint64(rec[8:16])
+			parent = le.Uint64(rec[16:24])
+			nameOff = int(le.Uint16(rec[58:60]))
+			nameLen = int(le.Uint16(rec[56:58]))
 		case 4:
 			// V4（NTFS 罕见，ReFS 常见）：128 位引用号取低 64 位；
 			// 布局 Usn@40 Reason@48 FileAttributes@56(QWORD) NameLen@64 NameOff@66
-			ref = le.Uint64(rec[8:])
-			parent = le.Uint64(rec[24:])
 			if len(rec) < 68 {
-				break
+				b = b[recLen:]
+				continue
 			}
-			nameOff = int(le.Uint16(rec[66:]))
-			nameLen = int(le.Uint16(rec[64:]))
+			ref = le.Uint64(rec[8:16])
+			parent = le.Uint64(rec[24:32])
+			nameOff = int(le.Uint16(rec[66:68]))
+			nameLen = int(le.Uint16(rec[64:66]))
 			v4 = true
 		default:
 			b = b[recLen:]
@@ -289,8 +302,17 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 		return nil, err
 	}
 
-	rawJID, _ := u.store.GetKV(ctx, kvUsnJournalID)
-	rawCursor, _ := u.store.GetKV(ctx, kvUsnCursor)
+	// 读失败必须上抛，不能与"键不存在"混为一谈：GetKV 对缺失键返回 (nil,nil)，
+	// 而把真正的读错误当成 0 会命中下面的"首次运行"分支，直接把游标重置到
+	// NextUsn ---- 该区间的全部变更被静默跳过。
+	rawJID, err := u.store.GetKV(ctx, kvUsnJournalID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 usn journal id 失败: %w", err)
+	}
+	rawCursor, err := u.store.GetKV(ctx, kvUsnCursor)
+	if err != nil {
+		return nil, fmt.Errorf("读取 usn 游标失败: %w", err)
+	}
 	storedJID, _ := parseU64(rawJID)
 	cursor, _ := parseU64(rawCursor)
 
@@ -348,6 +370,7 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 	}
 
 	const maxBatches = 512 // 安全阀
+	prevCursor := cursor
 	for i := 0; i < maxBatches; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -369,6 +392,15 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 			case rec.Reason&reasonRenameNewName != 0:
 				newPath, ok := resolve(rec.ParentRef, rec.Name)
 				if !ok {
+					// 重命名目标在监控根之外 = 文件被移出同步范围（拖进回收站、
+					// 跨目录/跨盘移走等）。对同步而言这等价于"源路径消失"，
+					// 必须按删除上报 ---- 否则索引永远保留该行、远端残留旧副本，
+					// 且没有任何症状（实测：把文件拖进回收站后索引状态不变）。
+					if old, paired := oldNames[rec.Ref]; paired {
+						if oldPath, ok2 := resolve(old.ParentRef, old.Name); ok2 {
+							deleted[oldPath] = true
+						}
+					}
 					continue
 				}
 				old, paired := oldNames[rec.Ref]
@@ -423,8 +455,13 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 			}
 		}
 		cursor = next
-		if err := u.saveCursor(ctx, meta.JournalID, cursor); err != nil {
-			return nil, err
+		// 只在游标真正推进时落库：无新记录时每轮都写 KV 会持续触碰 WAL，
+		// 与"空闲零唤醒、零写库"的设计目标直接冲突。
+		if cursor != prevCursor {
+			if err := u.saveCursor(ctx, meta.JournalID, cursor); err != nil {
+				return nil, err
+			}
+			prevCursor = cursor
 		}
 		if len(recs) == 0 || cursor >= meta.NextUsn {
 			break
@@ -436,13 +473,17 @@ func (u *UsnBackend) DetectCycle(ctx context.Context) (*UsnCycleResult, error) {
 			return nil, err
 		}
 	}
+	// 同轮内"删除 + 重建同名文件"必须按"变了"上报：此前把 deleted 里的路径从
+	// changed 中整体剔除，会让重建出来的新文件既不表达删除、也不被重传 ----
+	// 远端长期停在旧内容。正确的分流点是上层 ApplyChanges（用 os.Lstat 判定：
+	// 存在→modified，不存在→vanished），这里不替它做决定。
 	for p := range changed {
-		if !deleted[p] {
-			res.Changed = append(res.Changed, p)
-		}
+		res.Changed = append(res.Changed, p)
 	}
 	for p := range deleted {
-		res.Deleted = append(res.Deleted, p)
+		if !changed[p] {
+			res.Deleted = append(res.Deleted, p)
+		}
 	}
 	res.Cursor = cursor
 	res.JournalNext = meta.NextUsn

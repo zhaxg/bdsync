@@ -187,8 +187,15 @@ func (c *Client) blockUploadFunc(r io.Reader, size int64) baidupcs.UploadFunc {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := io.Copy(part, io.LimitReader(r, size)); err != nil {
+		// reader 不可重放：SDK 若对同一 POST 重试，r 已被消费完，io.Copy 会返回
+		// (0, nil) 而不报错 ---- 空分片会被当成功提交，最终文件被静默截断。
+		// 这里显式比对字节数，把"静默成功"变成"可见失败"。
+		n, err := io.Copy(part, io.LimitReader(r, size))
+		if err != nil {
 			return nil, err
+		}
+		if n != size {
+			return nil, fmt.Errorf("上传回调读取源仅得 %d/%d 字节（reader 可能已被消费，无法重放）", n, size)
 		}
 		if err := mw.Close(); err != nil {
 			return nil, err
@@ -206,6 +213,9 @@ func (c *Client) blockUploadFunc(r io.Reader, size int64) baidupcs.UploadFunc {
 
 		hc := &http.Client{
 			Transport: uploadTransport,
+			// 必须给整个请求设上限：只配 ResponseHeaderTimeout 时，socket 写阻塞
+			// （对端不读）没有任何期限，一次卡死会永久占用一个上传 worker。
+			Timeout: 15 * time.Minute,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse // 3xx 当作响应交给 SDK 判错
 			},
@@ -278,16 +288,25 @@ func (c *Client) DownloadAndHash(remotePath string, size int64) (string, int64, 
 	link := u.String()
 
 	// 1) 整文件一次性下载
+	// 长度也要校验：CDN 可能静默截断（连接正常关闭），只判 err 会返回错误 md5，
+	// 让 verify 误判成"远端损坏"而反复重传。不达标则落到下面的窗口降级路径。
 	h := md5.New()
-	if n, err := c.streamRange(link, 0, size-1, size, h); err == nil {
+	if n, err := c.streamRange(link, 0, size-1, size, h); err == nil && (size <= 0 || n == size) {
 		return hex.EncodeToString(h.Sum(nil)), n, nil
 	}
 
 	// 2) 降级：256KB 窗口逐段
 	const window = 256 * 1024
+	// maxRounds -- 未知大小时的轮次上限：服务端若忽略 Range 而每次都返回整包，
+	// 循环唯一出口（n == 0）就永远不会到达，会变成死循环。1 GiB 的窗口总量
+	// 远超正常下载需求，只作兜底。
+	const maxRounds = 4096
 	h.Reset()
 	var total int64
 	for off := int64(0); size <= 0 || off < size; off += window {
+		if off/window >= maxRounds {
+			return "", total, fmt.Errorf("分段下载轮次超上限（%d 轮，已读 %d 字节）：服务端可能忽略了 Range", maxRounds, total)
+		}
 		end := off + window
 		if size > 0 && end > size {
 			end = size
@@ -300,6 +319,9 @@ func (c *Client) DownloadAndHash(remotePath string, size int64) (string, int64, 
 		if n == 0 {
 			break
 		}
+		if size > 0 && total > size {
+			return "", total, fmt.Errorf("分段下载超出文件长度: %d/%d（服务端可能忽略了 Range）", total, size)
+		}
 	}
 	if size > 0 && total != size {
 		return "", total, fmt.Errorf("下载不完整: %d/%d", total, size)
@@ -307,17 +329,19 @@ func (c *Client) DownloadAndHash(remotePath string, size int64) (string, int64, 
 	return hex.EncodeToString(h.Sum(nil)), total, nil
 }
 
-// streamRange -- 请求 [from,to]（含端点）并写入 h，返回字节数。接受 200/206。
+// streamRange -- 请求 [from,to]（含端点）并写入 h，返回字节数。
+// h 由调用方保证非 nil（此函数不产出摘要，只负责把字节喂进去）。
+// 带了 Range 时只接受 206：服务端忽略 Range 返回 200 会把整包内容喂进来，
+// 按窗口切分的调用方会因此重复计入同一段数据、摘要必然算错。
 func (c *Client) streamRange(link string, from, to, size int64, h hash.Hash) (int64, error) {
 	req, err := http.NewRequest(http.MethodGet, link, nil)
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("User-Agent", baidupcs.NetdiskUA)
-	if size > 0 || to >= from {
-		if to >= from {
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", from, to))
-		}
+	wantRange := to >= from
+	if wantRange {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", from, to))
 	}
 	for _, ck := range ParseCookies(c.cookieStr) {
 		req.AddCookie(ck)
@@ -328,11 +352,12 @@ func (c *Client) streamRange(link string, from, to, size int64, h hash.Hash) (in
 		return 0, err
 	}
 	defer resp.Body.Close()
+	if wantRange && resp.StatusCode != http.StatusPartialContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return 0, fmt.Errorf("服务端忽略了 Range（HTTP %d）: %.200s", resp.StatusCode, body)
+	}
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:
-		if h == nil {
-			h = md5.New()
-		}
 		n, err := io.Copy(h, resp.Body)
 		return n, err
 	default:
@@ -418,8 +443,13 @@ func AsPCSError(err error) (pcserror.Error, bool) {
 	if err == nil {
 		return nil, false
 	}
-	pe, ok := err.(pcserror.Error)
-	return pe, ok
+	// 用 errors.As 而非直接断言：调用链上的错误常被 fmt.Errorf("...: %w") 包装，
+	// 直接断言会静默失效（RemoteMissing 与 Mkdir 的 31061 幂等判断都依赖它）。
+	var pe pcserror.Error
+	if errors.As(err, &pe) {
+		return pe, true
+	}
+	return nil, false
 }
 
 // ParseCookies -- "A=1; B=2" → []*http.Cookie。

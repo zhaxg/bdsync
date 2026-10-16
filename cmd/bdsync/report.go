@@ -160,6 +160,10 @@ func printStatus(dbPath string, dbSize int64, root, remoteRoot, mode string, sch
 	if pend.Deferred > 0 {
 		fmt.Printf("  其中推迟      %s 个（settle 未到 / 写入中 / 临时失败，drain 会自动重试）\n", commas(pend.Deferred))
 	}
+	if pend.Blocked > 0 {
+		fmt.Printf("  阻塞          %s 项已超过 %d 次尝试上限，不再自动重试（查 last_err 定位原因）\n",
+			commas(pend.Blocked), index.MaxAttempts)
+	}
 	if appCfg.Mirror.Enabled {
 		fmt.Printf("  镜像          归档目录 %s / 保留 %d 天", appCfg.Mirror.HistoryDir, appCfg.Mirror.HistoryDays)
 		if pend.History > 0 {

@@ -29,5 +29,11 @@ func sampleMem() runtimeMem {
 	}
 }
 
-// liveHeap -- GC 后存活堆。
-func liveHeap() int64 { return sampleMem().HeapAlloc }
+// liveHeap -- 存活堆。刻意**不**触发 GC：原实现会走 sampleMem 里的 runtime.GC()，
+// 而 liveHeap 被 /api/status 每次轮询调用 ---- 等于让看板每隔一秒触发一次全量
+// GC + STW。要"GC 后"的口径请显式用 sampleMem。
+func liveHeap() int64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return int64(m.HeapAlloc)
+}

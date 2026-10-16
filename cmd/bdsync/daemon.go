@@ -38,7 +38,7 @@ var version = defaultVersion
 // defaultVersion -- 未注入时的兜底版本号（开发态）。
 // 发布构建由 CI 用 -ldflags "-X main.version=$TAG" 覆盖成真实 tag，
 // 所以这里只需要跟得上节奏，别让本地 go build 出来的 exe 显示过时的版本。
-const defaultVersion = "v0.7.2"
+const defaultVersion = "v0.7.3"
 
 // quietHeartbeat -- 静默期心跳间隔。
 //
@@ -292,6 +292,20 @@ type serviceOpts struct {
 	OnReady func(rt *runtimeState, st *index.Store)
 }
 
+// safeRun -- 主循环调用外部模块时的 panic 兜底。
+//
+// 守护进程的可用性优先：检测/对账/排空里任何一次 panic 都不该把常驻进程带走
+// （HTTP 层已有 recover，这里是主循环的另一半）。记录堆栈后继续下一轮，
+// 由后续 tick 自然重试。
+func safeRun(logf func(string, ...any), what string, f func()) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			logf("[!] %s 内部 panic（已忽略本轮，继续运行）: %v\n%s", what, rec, debug.Stack())
+		}
+	}()
+	f()
+}
+
 // runService -- 备份运行时主体：索引库 → 后端 → Sender → 看板 → 检测/排空循环。
 // daemon 与 web（配置完成后）都走这里，保证两条入口行为完全一致。
 func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config, opts serviceOpts) error {
@@ -301,6 +315,16 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 	if appID == 0 {
 		appID = baidu.DefaultAppID
 	}
+	// 单实例：同一索引库只允许一个进程持有。看板端口占用只能覆盖
+	// web.enabled=true 的场景 ---- 关掉看板或走 daemon 子命令时，两个进程会
+	// 同时打开同一个索引库（重复上传 + 状态互相覆盖）。锁由内核随进程退出
+	// 释放，因此崩溃残留的锁文件不会阻止下次启动。
+	releaseLock, err := acquireSingleInstance(eff.Service.DBPath)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+
 	// 索引库就地部署在配置（=二进制）旁；不存在则按配置新建并绑定 pair
 	st, err := index.Open(eff.Service.DBPath, eff.Pair.LocalRoot)
 	if err != nil {
@@ -475,6 +499,9 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 		degraded            bool // usn 打不开/失效 → 本进程内降级 poll（design 硬规矩1)）
 		lastBeat            = time.Now()
 		quietSince          time.Time // 零值 = 当前不是静默态
+		// lastPend / lastPendQuery -- 待传统计缓存（空闲期节流查询用，见 drain 触发段）
+		lastPend      *index.Pending
+		lastPendQuery time.Time
 	)
 
 	tick := time.NewTicker(time.Second)
@@ -520,6 +547,11 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 					logf("[心跳] %s%s：静默 %s - 队列 %d 项（%s）- RSS %s - 后端 %s - 已运行 %s",
 						state, suffix, elapsed,
 						pend.Count+pend.History, humanBytes(pend.Bytes), mem, rt.backendName(), uptime)
+					// 阻塞项 = "没有同步"的唯一可见信号，必须主动喊出来，不能等用户查库
+					if pend.Blocked > 0 {
+						logf("[!] 心跳告警：%d 项已超过 %d 次尝试上限，不再自动重试（已记入索引 last_err，可用 check 查看）",
+							pend.Blocked, index.MaxAttempts)
+					}
 				}
 			}
 
@@ -530,10 +562,12 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 
 			// ── 强制对账（design §4.9 兜底）──
 			if now.After(nextReconcile) {
-				if ok := runFullScan(ctx, rt, localRoot, "周期对账"); ok {
-					lastChange = now
-					markActive(rt, &lastChange, logf)
-				}
+				safeRun(logf, "周期对账", func() {
+					if ok := runFullScan(ctx, rt, localRoot, "周期对账"); ok {
+						lastChange = now
+						markActive(rt, &lastChange, logf)
+					}
+				})
 				nextReconcile = now.Add(time.Duration(cfg.Detector.ReconcileInterval.Nanos()))
 			}
 
@@ -549,29 +583,31 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 			if now.Sub(lastDetect) >= interval {
 				lastDetect = now
 				changed := false
-				if useUsn && !degraded {
-					res, needFull, err := detector.RunUsnCycle(ctx, localRoot, st, snap.exclude)
-					switch {
-					case err != nil:
-						logf("[!] usn 后端失效，降级 poll（本进程内不再尝试 usn）: %v", err)
-						degraded = true
-						rt.degraded.Store(true) // 同步给 runtimeState，否则日志/看板仍显示 usn
-					case needFull:
-						logf("[!] usn 游标失效/journal 重建（正常路径）→ 全量扫描")
-						changed = runFullScan(ctx, rt, localRoot, "游标失效")
-						nextReconcile = now.Add(time.Hour) // 自适应压到 1h（design §4.9）
-					default:
-						if res.AddedFiles+res.Modified+res.Removed+res.Resurrected > 0 {
-							changed = true
-							logf("[usn] 变更 %d 新增 / %d 修改 / %d 删除（%s）",
-								res.AddedFiles, res.Modified, res.Removed, msHuman(res.WallMs))
-							rt.setLastScan(&activity{At: now, Summary: fmt.Sprintf(
-								"usn 新增 %d / 修改 %d / 删除 %d", res.AddedFiles, res.Modified, res.Removed)})
+				safeRun(logf, "变更检测", func() {
+					if useUsn && !degraded {
+						res, needFull, err := detector.RunUsnCycle(ctx, localRoot, st, snap.exclude)
+						switch {
+						case err != nil:
+							logf("[!] usn 后端失效，降级 poll（本进程内不再尝试 usn）: %v", err)
+							degraded = true
+							rt.degraded.Store(true) // 同步给 runtimeState，否则日志/看板仍显示 usn
+						case needFull:
+							logf("[!] usn 游标失效/journal 重建（正常路径）→ 全量扫描")
+							changed = runFullScan(ctx, rt, localRoot, "游标失效")
+							nextReconcile = now.Add(time.Hour) // 自适应压到 1h（design §4.9）
+						default:
+							if res.AddedFiles+res.Modified+res.Removed+res.Resurrected > 0 {
+								changed = true
+								logf("[usn] 变更 %d 新增 / %d 修改 / %d 删除（%s）",
+									res.AddedFiles, res.Modified, res.Removed, msHuman(res.WallMs))
+								rt.setLastScan(&activity{At: now, Summary: fmt.Sprintf(
+									"usn 新增 %d / 修改 %d / 删除 %d", res.AddedFiles, res.Modified, res.Removed)})
+							}
 						}
+					} else {
+						changed = runFullScan(ctx, rt, localRoot, "")
 					}
-				} else {
-					changed = runFullScan(ctx, rt, localRoot, "")
-				}
+				})
 				if changed {
 					markActive(rt, &lastChange, logf)
 				}
@@ -580,14 +616,17 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 			// ── 远端清单对账（镜像模式；启动后按 mirror.remote_reconcile 周期）──
 			if cfg.Mirror.Enabled && rrInterval > 0 && now.Sub(lastRemoteReconcile) >= rrInterval {
 				lastRemoteReconcile = now
-				if rres, rerr := snd.ReconcileRemote(ctx, false); rerr != nil {
-					logf("[对账] 失败（下轮重试）: %v", rerr)
-				} else {
+				safeRun(logf, "远端对账", func() {
+					rres, rerr := snd.ReconcileRemote(ctx, false)
+					if rerr != nil {
+						logf("[对账] 失败（下轮重试）: %v", rerr)
+						return
+					}
 					logf("[对账] %s", rres.Summary())
 					if rres.ArchivedFiles+rres.ArchivedDirs+rres.MissingDirs > 0 {
 						markActive(rt, &lastChange, logf)
 					}
-				}
+				})
 			}
 
 			// ── 状态衰减（滞回，design §4.4）──
@@ -603,8 +642,22 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 			}
 
 			// ── drain 触发（design §8：双触发 + min_gap；镜像归档积压也算触发源）──
-			pend, perr := st.PendingStats(ctx)
-			if perr == nil {
+			// 查询节流：原实现每个 tick（1 秒）都无条件查一次库，稳态下等于每秒
+			// 唤醒 + 读 WAL，与"空闲零唤醒、零 CPU"的目标直接冲突。活跃期保持
+			// 即时查询；空闲期按 flush_interval（上限 30s）刷新 ---- 到点时必然已
+			// 刷新过，故 drain 的触发时机不受影响。
+			pendEvery := time.Duration(cfg.Sender.FlushInterval.Nanos())
+			if pendEvery <= 0 || pendEvery > 30*time.Second {
+				pendEvery = 30 * time.Second
+			}
+			if snap.active || lastPend == nil || now.Sub(lastPendQuery) >= pendEvery {
+				if p, qerr := st.PendingStats(ctx); qerr == nil {
+					lastPend = p
+					lastPendQuery = now
+				}
+			}
+			if lastPend != nil {
+				pend := *lastPend
 				histBacklog := cfg.Mirror.Enabled && pend.History > 0
 				if (pend.Count > 0 || histBacklog) && now.Sub(lastDrainEnd) >= time.Duration(cfg.Sender.MinGap.Nanos()) {
 					highWater := pend.Bytes >= cfg.Sender.FlushBytes.Int64()
@@ -621,24 +674,36 @@ func runService(ctx context.Context, stop context.CancelFunc, eff *config.Config
 							what += fmt.Sprintf(" + %d 项待归档", pend.History)
 						}
 						logf("[drain] 开始排空：%s", what)
-						dstats, err := snd.Drain(ctx, 0) // work-conserving：排空到低水位
+						var dstats *sender.Stats
+						var drainErr error
+						safeRun(logf, "排空上传", func() {
+							dstats, drainErr = snd.Drain(ctx, 0) // work-conserving：排空到低水位
+						})
 						lastDrainEnd = time.Now()
+						if dstats == nil {
+							// panic 已被兜住：本轮没有可用统计，直接进入下一轮
+							lastChange = time.Now()
+							continue
+						}
 						summary := fmt.Sprintf("秒传 %d / 上传 %d / 归档 %d / 改名 %d / 推迟 %d / 失败 %d - 传输 %s",
 							dstats.RapidOK, dstats.Uploaded, dstats.Archived, dstats.Renamed,
 							dstats.Deferred, dstats.Failed, humanBytes(dstats.Bytes))
 						if dstats.PrunedDirs > 0 {
 							summary += fmt.Sprintf(" - 清空目录 %d", dstats.PrunedDirs)
 						}
+						if pend.Blocked > 0 {
+							summary += fmt.Sprintf(" - 阻塞 %d 项（尝试次数已超限，不再自动重试）", pend.Blocked)
+						}
 						logf("[drain] 完成：%s（%s）", summary, msHuman(int64(dstats.Elapsed/time.Millisecond)))
 						rt.setLastDrain(&activity{At: lastDrainEnd, Summary: summary})
-						if err != nil {
-							if errors.Is(err, context.Canceled) {
+						if drainErr != nil {
+							if errors.Is(drainErr, context.Canceled) {
 								return nil // 信号/看板停止
 							}
 							if dstats.FatalError != nil {
 								return fmt.Errorf("致命错误，daemon 停止: %w", dstats.FatalError)
 							}
-							logf("[!] drain 出错（下轮重试）: %v", err)
+							logf("[!] drain 出错（下轮重试）: %v", drainErr)
 						}
 						lastChange = time.Now()
 					}
@@ -703,6 +768,7 @@ func statusProvider(rt *runtimeState, st *index.Store) func() any {
 			pending = map[string]any{
 				"count": pend.Count, "bytes": pend.Bytes, "deferred": pend.Deferred,
 				"history":     pend.History,
+				"blocked":     pend.Blocked, // 超过尝试上限、不再自动重试的行数（看板据此告警）
 				"oldest_sec":  time.Since(time.Unix(0, pend.OldestNs)).Seconds(),
 				"oldest_time": time.Unix(0, pend.OldestNs).Format("15:04:05"),
 			}

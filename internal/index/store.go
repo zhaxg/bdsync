@@ -11,20 +11,24 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
 
 // Store 是 SQLite 索引的唯一入口。
-// Phase 1 并发模型：单连接（只有 Detector 串行访问；WAL + 短事务，见 design §4.8）。
+// 并发模型：单连接（WAL + 短事务，见 design §4.8）。Detector 与 Sender 会共用
+// 同一个 Store 实例（daemon 即如此，见 ClaimBatch 的串行领取约定）。
 type Store struct {
 	db     *sql.DB
 	path   string
 	pairID int64
 
-	commitCount int
-	commitDur   time.Duration
+	// 写库统计：两边共用同一 Store，必须原子访问（原裸自增在 -race 下报竞争）。
+	commitCount atomic.Int64
+	commitDur   atomic.Int64 // 纳秒累计
 }
 
 // ChangeKind -- CommitBatch 的操作类型。
@@ -111,12 +115,24 @@ func open(path string) (*Store, error) {
 			return nil, fmt.Errorf("创建数据库目录失败: %w", err)
 		}
 	}
-	db, err := sql.Open("sqlite", abs)
+	// PRAGMA 写进 DSN：只在 open 后执行一次的话，连接被回收重建就丢了
+	// （busy_timeout 归零 → 立刻报 BUSY）。modernc.org/sqlite 用 _pragma 参数，
+	// 每次建连都会重新应用；配合 MaxOpenConns/MaxIdleConns=1 让它恒定生效。
+	// 注：synchronous 仍是 NORMAL（性能优先）---- 其崩溃安全边界见 docs/design.md。
+	dsn := "file:" + filepath.ToSlash(abs) + "?" + strings.Join([]string{
+		"_pragma=busy_timeout(5000)",
+		"_pragma=journal_mode(WAL)",
+		"_pragma=synchronous(NORMAL)",
+		"_pragma=foreign_keys(OFF)",
+		"_pragma=cache_size(-8000)",
+	}, "&")
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	// 单连接：保证 PRAGMA 恒定作用于该连接，也避免检测/发送互相抢写锁（Phase 1 只有检测端）。
+	// 单连接：保证 PRAGMA 恒定作用于该连接，也避免检测/发送互相抢写锁。
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := applyPragmas(db); err != nil {
 		db.Close()
 		return nil, err
@@ -353,8 +369,8 @@ func (s *Store) CommitBatch(ctx context.Context, runID int64, changes []Change) 
 	}
 
 	d := time.Since(t0)
-	s.commitCount++
-	s.commitDur += d
+	s.commitCount.Add(1)
+	s.commitDur.Add(int64(d))
 	return d, nil
 }
 
@@ -469,14 +485,24 @@ type PendingEntry struct {
 	RMtime     int64  // 远端副本 mtime（归档目标名用）
 }
 
+// maxAttempts -- 单文件上传/归档尝试上限。
+//
+// 达到上限的行不再被 pendingSelect 领取，会停在 state=ERROR 不再出队 ----
+// 这是"防死循环"的必要设计，但绝不能是静默的：PendingStats 因此专门暴露
+// Blocked 计数，daemon 会把它显式报在日志与看板上。
+const maxAttempts = 20
+
+// MaxAttempts -- 同上，导出给 daemon/看板的告警文案引用（避免各处硬编码数字）。
+const MaxAttempts = maxAttempts
+
 // pendingSelect -- 待传文件选择（最早 settle 优先；attempts 上限防死循环；
 // 非法文件名拦截行永不出队 ---- 见 internal/netdiskname）。
-const pendingSelect = `
+var pendingSelect = `
 	SELECT rel_path, COALESCE(l_size,0), COALESCE(l_mtime_ns,0), COALESCE(l_md5,''),
 	       COALESCE(l_settled_ns,0), attempts, COALESCE(upload_id,''), COALESCE(done_blocks,''),
 	       CASE WHEN r_fsid IS NULL THEN 0 ELSE 1 END, COALESCE(r_mtime,0)
 	FROM entry
-	WHERE pair_id=? AND is_dir=0 AND state IN (2,4,6) AND attempts < 20
+	WHERE pair_id=? AND is_dir=0 AND state IN (2,4,6) AND attempts < ` + strconv.Itoa(maxAttempts) + `
 	  AND COALESCE(last_err,'') NOT LIKE '非法文件名:%'
 	ORDER BY l_settled_ns ASC, rel_path ASC LIMIT ?`
 
@@ -749,25 +775,64 @@ func (s *Store) DeferEntry(ctx context.Context, relPath string) error {
 	return err
 }
 
-// FailUpload -- 记录失败（state=ERROR，attempts+1）。
-func (s *Store) FailUpload(ctx context.Context, relPath, errMsg string) error {
-	if len(errMsg) > 500 {
-		errMsg = errMsg[:500]
+// truncateErrMsg -- 按 UTF-8 边界截断错误信息（原按字节截断会把多字节字符切成非法序列）。
+func truncateErrMsg(s string, limit int) string {
+	if len(s) <= limit {
+		return s
 	}
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE entry SET state=6, attempts=attempts+1, last_err=? WHERE pair_id=? AND rel_path=?`,
-		errMsg, s.pairID, relPath)
-	return err
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// FailUpload -- 记录失败（state=ERROR，attempts+1）。
+//
+// 带与 FinishUpload 相同的乐观锁：上传期间本地已变更的话，这次失败属于旧版本，
+// 不该把新版本一并判错（否则新版本会白耗一轮 attempts 配额）。
+// applied=false 表示快照已变，调用方按"新版本待重传"处理即可，不是错误。
+func (s *Store) FailUpload(ctx context.Context, e PendingEntry, errMsg string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE entry SET state=?, attempts=attempts+1, last_err=?
+		WHERE pair_id=? AND rel_path=? AND state=?
+		  AND COALESCE(l_mtime_ns,0)=? AND COALESCE(l_size,0)=?`,
+		StateError, truncateErrMsg(errMsg, 500),
+		s.pairID, e.RelPath, StateInProgress, e.MtimeNs, e.Size)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // FinishUpload -- 上传成功：state=IDENTICAL + 远端信息回写（design §7 步骤6）。
-func (s *Store) FinishUpload(ctx context.Context, relPath string, fsid, rSize, rMtime int64, rMd5 string) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE entry SET state=1, r_fsid=?, r_size=?, r_mtime=?, r_md5=?, last_sync=?,
+//
+// 乐观锁（关键）：WHERE 比对领取时的 l_mtime_ns/l_size 快照。大文件上传可能持续
+// 数分钟，期间本地文件若被再次修改，Detector 已把该行写回"待传"并更新了
+// l_mtime_ns/l_size ---- 此时若无条件回写 IDENTICAL，那个新版本将永不重传，
+// 索引自认为一致，表现为静默漏备份。
+//
+// applied=false 表示快照已变：保留 Detector 写入的新状态，下轮自动重传。
+func (s *Store) FinishUpload(ctx context.Context, e PendingEntry, fsid, rSize, rMtime int64, rMd5 string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE entry SET state=?, r_fsid=?, r_size=?, r_mtime=?, r_md5=?, last_sync=?,
 			upload_id=NULL, done_blocks=NULL, attempts=0, last_err=NULL
-		WHERE pair_id=? AND rel_path=?`,
-		fsid, rSize, rMtime, rMd5, time.Now().Unix(), s.pairID, relPath)
-	return err
+		WHERE pair_id=? AND rel_path=? AND state=?
+		  AND COALESCE(l_mtime_ns,0)=? AND COALESCE(l_size,0)=?`,
+		StateIdentical, fsid, rSize, rMtime, rMd5, time.Now().Unix(),
+		s.pairID, e.RelPath, StateInProgress, e.MtimeNs, e.Size)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // SetLocalMD5 -- 哈希结果持久化。
@@ -792,21 +857,41 @@ type Pending struct {
 	OldestNs int64
 	Deferred int64 // 其中推迟中（UNSTABLE）
 	History  int64 // 镜像归档积压：本地已删、远端旧版待归档（state=9 & r_fsid!=空）
+	// Blocked -- attempts 已达上限、不再被领取的行（上传失败或归档失败）。
+	// 这是"静默不备份"的唯一可见信号，必须报在 daemon 日志与看板上。
+	Blocked int64
 }
 
 // PendingStats -- 待传统计。daemon 的 drain 触发用全量口径：推迟中与归档积压
 // 都必须能触发下一轮 drain，否则会卡死。
+//
+// 拆成三条查询：原来的 SUM(CASE ...) 谓词不可 sargable，每次 drain 触发都全表
+// 扫描整个 entry 表；现在每条都能命中各自的索引（idx_pending / idx_history /
+// idx_blocked）。History 与 Blocked 分别对应"归档积压""卡住不备份"两种异常。
 func (s *Store) PendingStats(ctx context.Context) (*Pending, error) {
 	p := &Pending{}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN state IN (2,4,6,8) THEN 1 ELSE 0 END),0),
-		       COALESCE(SUM(CASE WHEN state IN (2,4,6,8) THEN COALESCE(l_size,0) ELSE 0 END),0),
-		       COALESCE(MIN(CASE WHEN state IN (2,4,6,8) THEN COALESCE(l_settled_ns,0) END),0),
-		       COALESCE(SUM(CASE WHEN state = 8 THEN 1 ELSE 0 END),0),
-		       COALESCE(SUM(CASE WHEN state = 9 AND r_fsid IS NOT NULL THEN 1 ELSE 0 END),0)
-		FROM entry WHERE pair_id=? AND is_dir=0`, s.pairID).
-		Scan(&p.Count, &p.Bytes, &p.OldestNs, &p.Deferred, &p.History)
+		SELECT COUNT(*),
+		       COALESCE(SUM(COALESCE(l_size,0)),0),
+		       COALESCE(MIN(COALESCE(l_settled_ns,0)),0),
+		       COALESCE(SUM(CASE WHEN state=? THEN 1 ELSE 0 END),0)
+		FROM entry
+		WHERE pair_id=? AND is_dir=0 AND state IN (?,?,?,?)`,
+		StateUnstable, s.pairID, StateLocalNew, StateLocalMod, StateError, StateUnstable).
+		Scan(&p.Count, &p.Bytes, &p.OldestNs, &p.Deferred)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM entry
+		WHERE pair_id=? AND is_dir=0 AND state=? AND r_fsid IS NOT NULL`,
+		s.pairID, StateRemovedLocal).Scan(&p.History); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM entry
+		WHERE pair_id=? AND is_dir=0 AND state=? AND attempts >= ?`,
+		s.pairID, StateError, maxAttempts).Scan(&p.Blocked); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -1051,7 +1136,9 @@ func (s *Store) CheckList(ctx context.Context, only []string) ([]CheckEntry, err
 }
 
 // CommitStats -- 本进程累计的写库批次数与耗时。
-func (s *Store) CommitStats() (count int, total time.Duration) { return s.commitCount, s.commitDur }
+func (s *Store) CommitStats() (count int, total time.Duration) {
+	return int(s.commitCount.Load()), time.Duration(s.commitDur.Load())
+}
 
 func (s *Store) Path() string  { return s.path }
 func (s *Store) PairID() int64 { return s.pairID }

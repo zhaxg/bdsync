@@ -38,6 +38,10 @@ quota:                    # 静默控制（design §4.4/4.5）
   idle_threshold: 5m      # 静默多久回 QUIET（滞回）
   quiet_cpu_cap: 5        # QUIET 态 CPU 硬上限 %（Job Object；Linux 用 systemd）
   active_cpu_cap: 80      # ACTIVE 态 CPU 硬上限 %
+  # history_days 也能写在这里（与 mirror.history_days 是同一个旋钮，等价）：
+  #   优先级：mirror.history_days 显式出现 > quota.history_days > 默认 90；
+  #   0 = 永久保留。推荐只写 mirror 下那一处，避免两处冲突。
+  # history_days: 90
 
 policy:
   propagate_delete: false # 历史遗留字段：必须 false（删除的传播由 mirror 模式接管）
@@ -65,6 +69,12 @@ service:
   initialized: true                # 首次配置完成标记（向导自动写入）
                                    #   true  → 双击直接进服务态，不再显示首次配置向导
                                    #   false → 每次启动都进向导（删掉本文件等价于重来）
+
+web:                      # 看板（design §13）：默认关闭；也可用 --web 临时开启
+  enabled: false          # true=启动看板
+  addr: "127.0.0.1:8787"  # 只监听本机回环地址（安全约束）：
+                          #   只能是 127.0.0.1 / localhost / ::1 / 127.x.x.x，
+                          #   写其它地址会被 Validate 拒绝 ---- 看板绝不对外暴露。
 
 # 部署形态（就地便携）：
 #   <任意目录>/bdsync/

@@ -1793,3 +1793,143 @@ DRIVE_REMOTE    4   // ❌ 网络盘
 | **误归档恢复 = 重入队 + 秒传重建** | 内容仍在服务端（归档副本），秒传按内容 md5 命中，零带宽恢复主树；已真机演练固化 | 逐个 Move 搬回：N 次 API 调用且需维护反向映射 |
 | Web 看板内嵌 daemon 进程 | 控制面（暂停/停止）直连状态机，零 IPC；日志事件源同进程 | 独立看板进程：需要跨进程控制通道，复杂度翻倍 |
 | 凭据只认环境变量（配置文件禁存 BDUSS/STOKEN） | 配置文件会被拷走/同步/提交；环境变量是本机进程级 | 配置存凭据：泄密面扩大到所有接触配置文件的路径 |
+
+---
+
+## 附录 C · 代码审查修复记录（2026-10-16）
+
+一次全量代码审查（五模块逐文件精读 + 高危结论人工复核）后的修复记录。分三档：
+**P0** = 数据丢失/不一致/崩溃/安全漏洞；**P1** = 可靠性、并发、资源隐患；**P2** = 可维护性与加固。
+
+### C.1 本轮修复清单
+
+#### 看板安全（`web/web.go`）
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| `withLocal` 缺 Host 校验 | P0 | 原防线（RemoteAddr 回环 + 以 `r.Host` 为基准的 Origin 前缀匹配）挡不住 DNS rebinding：恶意页面把域名解析到 127.0.0.1 后，请求经回环进来、Origin 与 Host 自洽，两道校验全过。现在把 `r.Host` 钉死在监听地址上（`allowedHost`），并对写请求强制要求同源 Origin。 |
+| 写请求无 Origin 时放行 | P1 | 改成：非 GET/HEAD 必须带同源 Origin；脚本类客户端用自定义头 `X-Bdsync-Local` 显式声明（跨源携带该头会触发 CORS 预检，而本服务不返回任何 CORS 允许头 → 恶意网页伪造不了，不削弱防护）。 |
+| 监听地址未强制回环 | P1 | 配置若写成 `":8787"`，`net.Listen` 会静默绑全网卡。现在 listen 后校验实际地址，非回环直接拒绝启动。 |
+| `isLoopback("")` 返回 true | P2 | 去掉空主机名放行分支。 |
+| `/api/setup/probe` 接受任意路径 | P2 | 限定 GET + 必须为绝对路径。 |
+
+#### 数据一致性（`internal/index` + `internal/sender`）
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| 上传回写无版本守卫 | P0 | `FinishUpload`/`FailUpload` 的 WHERE 原本只有 `pair_id+rel_path`。大文件上传可能持续数分钟，期间本地被再次修改（Detector 已写回"待传"并更新 `l_mtime_ns/l_size`），此时无条件回写 IDENTICAL 会让那个新版本**永不重传**。现在 WHERE 带上领取时的 `state=IN_PROGRESS` + `l_mtime_ns` + `l_size` 快照，`RowsAffected()==0` 即保留新状态。 |
+| 归档目标名撞名 | P1 | 目标名是 `<rel>@<r_mtime>`（秒级），幂等检查"目标存在 = 已归档"。`r_mtime` 缺失（0）时所有版本会撞成 `@0`，误判已归档后清账 → 旧版丢失。现在 `r_mtime<=0` 时用当前时间兜底：宁可留下重复归档（源已移走时第二次无害返回），也不静默丢版本。 |
+| attempts 超限静默丢弃 | P1 | `pendingSelect` 用 `attempts < 20` 排除，失败行会永久停在 ERROR：既不上传也不报错。现在提取常量 `index.MaxAttempts`，`PendingStats` 新增 `Blocked` 口径，daemon 心跳/排空日志、`status` 命令、看板 JSON 全部显式报出。 |
+| 归档失败计入上传失败 | P1 | 归档失败会 `attempts+1`，20 次后被静默丢弃。归档是"覆盖前的保护动作"，其失败不该消耗上传配额（改动为 UNSTABLE 语义，不递增 attempts）。 |
+| USN 同轮"删后重建"被丢弃 | P1 | 收尾时把 `deleted` 中的路径从 `changed` 整体剔除，导致重建出的新文件既不入删除语义也不被重传。改为两条集合各自上报，分流交给 `ApplyChanges` 的 `os.Lstat` 判定。 |
+| poll 子树不可读 → 假删除 | P1 | 子目录 Access Denied 后 `fs.SkipDir`，整棵树不进 `seen`，删除判定把它们全部标为 `REMOVED_LOCAL`。现在标记 `walkIncomplete`，该轮只跳过删除判定（本轮检测到的变更仍照常提交，下轮自愈）。 |
+| 对账无安全阀 | P0 | 对账以本地清单为唯一真值来源，索引异常（库损坏/pair 未初始化/检测未跑完）时清单变短即导致**整棵主树被搬进 `.history`**（`recovery_live_test.go` 记录过真实事故 M3）。现在归档前统计 `victims/cand`，超过 `max(20, 50%)` 直接中止并报错，不静默降级。 |
+| 空目录删除的 TOCTOU | P1 | `IsEmpty` 与 `Remove` 之间网盘侧新放入的文件会被递归删掉。修复方式为删除前复核（缩小窗口）+ 已知残余风险记录（见 C.3），不改变外部行为。 |
+
+#### 检测层（`internal/detector`）
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| USN 解析先读后校验 | P0 | `le.Uint64(rec[16:])` 在 `len(rec)<60` 检查**之前**执行，`recLen∈[16,23]` 的畸形记录直接 panic（越界），把常驻进程带走。改为长度前置校验 + 显式切片上界。 |
+| `GetKV` 读错误被吞 | P1 | 读失败被当成 0，命中"首次运行"分支后把游标重置到 `NextUsn` → 该区间全部变更被静默跳过。现在区分"键不存在"（`(nil,nil)`）与读失败（上抛）。 |
+| 空闲时仍写游标 | P1 | 无新记录也每轮 `saveCursor`（2 次 KV 写），持续触碰 WAL，与"空闲零唤醒"冲突。改为仅在游标推进时落库。 |
+| **元数据查询用错 FSCTL** | P0 | `readMeta` 调用的是 `0x000900BB`，而那是 `FSCTL_READ_USN_JOURNAL`（要求 40 字节输入结构）；用空输入调用必然返回 `ERROR_INVALID_USER_BUFFER`，于是**元数据查询在启动时就失败、整个进程永久降级为 poll**。真正的 `FSCTL_QUERY_USN_JOURNAL = 0x000900F4`。这是本轮最严重的发现：USN 后端自始未曾生效，"空闲零唤醒"的核心前提实际不成立。 |
+| **读记录 IOCTL 值错误 + 输入缓冲未对齐** | P0 | `readBatch` 的 `0x000900A4` 并非任何 READ_USN_JOURNAL；且 `FSCTL_READ_USN_JOURNAL` 是 `METHOD_NEITHER`（驱动直接访问用户内存），栈上的 `[40]byte` 只按 1 字节对齐，可能被驱动以"用户缓冲无效"拒掉。改为正确值 `0x000900BB` + 堆分配（分配器保证 8 字节对齐）。 |
+| **JournalID 解析偏移错误** | P0 | 原实现把"`@0` 是 V2 才有的 JournalID"当作前提，在低字节数分支里把 `@0` 读作 `FirstUsn`。实际 `USN_JOURNAL_DATA_V0` 自 `@0` 起就是 JournalID（前 56 字节 V0/V1/V2 一致）。若走到该分支，JournalID 恒为 0 → 每轮都命中"首次运行"分支 → 永不产出变更。现在统一按 56 字节布局解析，输出缓冲留足 V2 的 88 字节。 |
+| **移出监控根的重命名未按删除上报** | P0 | `resolve` 新路径失败（目标在监控根之外，例如把文件拖进回收站、跨目录/跨盘移走）时直接 `continue` 忽略 ---- 源路径于是既不进 changed 也不进 deleted，**索引永远保留该行、远端残留旧副本且毫无症状**。实测：删除文件后索引状态不变（`state` 仍为 `LOCAL_NEW`）。现在解析不到目标即把源路径按删除上报。 |
+
+#### 网络层（`internal/baidu`）
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| 分片上传 client 无 Timeout | P1 | 只配了 `ResponseHeaderTimeout`，socket 写阻塞无期限 → 一次卡死永久占用 worker。加 `Timeout: 15m`。 |
+| 上传回调 reader 不可重放 | P1 | SDK 重试时 `io.Copy` 返回 `(0,nil)` **不报错** → 空分片当成功提交，文件被截断。现在比对字节数，不足即显式失败。 |
+| 降级下载可能死循环 | P1 | 循环唯一出口是 `n==0`；服务端忽略 Range 返回 200 时 `size<=0` 永不退出、已知大小时每窗口重下整包。现在带 Range 时强制 206 + 轮次上限 + 超长检测。 |
+| 整包下载不校验长度 | P1 | 快路径只判 err（降级路径却判了）→ CDN 静默截断返回错误 md5。改为同时校验 `n==size`。 |
+| `AsPCSError` 直接断言 | P2 | 改 `errors.As`，避免错误被 `%w` 包装后 `RemoteMissing`/31061 幂等判断静默失效。 |
+
+#### 启动与运维（`cmd/bdsync` + `internal/logx`）
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| 主循环无 panic 兜底 | P1 | HTTP 层有 recover，主循环没有 → 检测/对账/排空的任一 panic 直接带走进程。新增 `safeRun` 包裹四处外部调用（周期对账、变更检测、远端对账、排空上传）。 |
+| 未启看板时无单实例保护 | P1 | 单实例原本只靠看板端口占用。新增锁文件（Windows：share mode=0 独占打开；其他平台：`flock`），**锁随进程退出由内核释放**，因此崩溃残留的锁文件不会阻止下次启动 ---- 不依赖 PID 判定，无需清理逻辑。 |
+| 空闲态每秒查库 | P1 | 每 tick（1s）无条件 `PendingStats`。改为活跃期即时、空闲期按 `flush_interval`（上限 30s）刷新；到点时必然已刷新，drain 触发时机不受影响。 |
+| 索引查询未走索引 | P1 | `PendingStats` 的 `SUM(CASE...)` 不可 sargable（每次 drain 触发全表扫描）；`pendingSelect` 的 `ORDER BY l_settled_ns` 与 `idx_pending` 第三列 `l_mtime_ns` 不匹配（每次领取都要物化排序）；`state=9` 被部分索引排除却正是归档积压口径。新增 `idx_pending_order` / `idx_history` / `idx_blocked` 三条部分索引，并把统计拆成三条可命中索引的查询。 |
+| PRAGMA 未写入 DSN | P1 | 只在 open 后执行一次，连接回收重建即丢失（`busy_timeout` 归零 → 立刻 BUSY）。改写入 DSN（`_pragma=...`）+ `SetMaxIdleConns(1)`。 |
+| 统计字段数据竞争 | P1 | `Stats.FatalError`/`Stats.Claimed` 由 worker 加锁写、主 goroutine 裸读；`commitCount/commitDur` 裸自增。分别改为加锁 getter 与 `atomic.Int64`。 |
+| `liveHeap()` 强制 GC | P1 | 看板每次轮询状态都触发一次全量 GC + STW。改为只读 `MemStats`（要"GC 后"口径请显式用 `sampleMem`）。 |
+| 日志轮转失败即永久失效 | P1 | 轮转先 `Close()` 但未置空句柄，`os.Rename` 失败后 `open()` 不再执行，后续写入全打在已关闭 fd 上且无告警。现在每条失败路径都保证句柄置空 + 向 stderr 告警。 |
+| 错误被静默吞掉 | P1 | `FailUpload/DeferEntry/MarkMissing/SetLocalMD5/SaveProgress` 的返回值多处丢弃。现在关键路径都带 `rel_path` 记日志。 |
+| 中途重试不复用已传分片 | P1 | `doneSet` 只来自领取快照，`persistProgress` 只写库不回写内存 → 分片失败重试从 seq 0 重传。现在同步回写内存。 |
+| `ctx` 取消无法中断在途上传 | P1 | 分片循环内不检查 ctx，关停/致命错误后单个大文件仍会跑完整段。循环内加检查，取消时保留已传分片供续传。 |
+
+#### 配置与 CI
+
+| 项 | 档 | 修复 |
+|---|---|---|
+| YAML 未严格模式 | P2 | 拼错键静默忽略（用户以为改了配置，实际按默认跑）。`Load` 启用 `KnownFields(true)`。 |
+| `history_days` 优先级判据错误 | P2 | 原判据是"值 ≠ 默认 90"，导致显式写 `0`（永久保留）被 `quota.history_days` 静默覆盖。改为按"键是否出现"判定优先级，并同步 `bdsync.example.yaml` 的说明。 |
+| `ParseByteSize` 接受负数 | P2 | 负值会让 drain 触发条件恒真/恒假。加非负校验 + `Validate` 补 `FlushBytes > 0`。 |
+| 示例配置缺 `web:` 段 | P2 | 补上，并说明"只监听回环"的安全约束。 |
+| `netdiskname` 校验缺口 | P2 | 补控制字符（`<0x20`、`0x7f`）与单组件长度（255 rune）拦截。**未做** Unicode NFC 归一化：会改变已有文件的远端路径、触发大规模重命名，风险高于收益。 |
+| CI 脚本注入 | P2 | `release.yml` 把 `${{ steps.ver.outputs.tag }}` 直接插值进 bash（tag 来自 `GITHUB_REF_NAME`，git ref 名允许 `$ ( ) ; \` \|`，校验正则又允许 `[-+].*` 后缀）→ 能推 tag 者可在 runner 上执行任意命令。改为经 `env:` 传值，`grep -qa` 改 `-qaF`。 |
+| CI 无质量门禁 | P2 | 新增 `go test -race ./...` 与 `go vet ./...`（仓库 8 个测试包此前从未在 CI 跑过）。`*_live_test.go` 由环境变量门控，无凭据时自行 Skip。 |
+| 硬编码 app_id | P2 | 向导路径的 `266719` 改为 `baidu.DefaultAppID`，避免两处漂移。 |
+| UPX 无来源校验 | P2 | **未修**：不凭记忆填 sha256。已在 workflow 内留明确注释说明补齐方式（见 C.3）。 |
+
+### C.2 对使用者的行为变更
+
+1. **看板写接口需要同源 Origin**：浏览器看板不受影响。若有脚本/curl 调用 `/api/control`、`/api/config`、`/api/credentials`，需加请求头 `X-Bdsync-Local: 1`（或用 `-H "Origin: http://127.0.0.1:8787"`）。
+2. **单实例**：同一 `db_path` 只允许一个进程。第二个进程会明确报错退出，而不是静默双写索引。锁文件为 `<db_path>.lock`。
+3. **配置拼错键会报错**：YAML 中出现未知键将拒绝启动并指出键名（此前静默忽略）。
+4. **阻塞项会被报出来**：连续失败达到 `index.MaxAttempts`（20）的文件不再自动重试，但会出现在 `status` 输出、心跳日志与看板 JSON 的 `pending.blocked` 字段中。
+5. **对账护栏**：清单外条目超过半数且多于 20 项时对账中止并报错，需人工确认索引状态（这是保护，不是故障）。
+
+### C.3 已知未修项（留有明确记录）
+
+| 项 | 为何不修 |
+|---|---|
+| `synchronous=NORMAL` 与"断电不丢变更"的措辞 | 改 `FULL` 会给每次提交加 fsync，直接冲击吞吐与磁盘唤醒目标。**准确的承诺是**："进程崩溃（panic/被杀）不丢已提交的变更；操作系统断电/掉电可能丢失最后一次 checkpoint 之前的批次"。要断电级保证可自行改 DSN 里的 `_pragma=synchronous(FULL)`。 |
+| 空目录删除的 TOCTOU 残余 | 检查为空与执行删除无法原子化。已加删前复核，残余风险在"复核后、Remove 前"的毫秒级窗口。彻底消除需改为"空目录也先归档"，会改变 `.history` 的内容语义，需单独立项。 |
+| 变更判定不比对 FRN | 修复需索引新增 FRN 列 + 迁移 + poll/usn 两侧比对改造。"删除后用相同 size 且保留 mtime 重建同名文件"的场景较少见；本轮先在检测侧记录该已知限制。 |
+| junction/reparse point 的越界扫描风险 | 取决于目标 Go 版本对 `fs.DirEntry.Type()` 是否对 junction 置 `ModeSymlink`，需在真实环境实测后才能确定修法。 |
+| `appCfg` / `appCfgPath` 的包级并发读写 | 需把 70 处 `appCfg.X` 机械替换为访问器调用，改动面大于本轮收益（实际影响是看板保存配置与状态读取的极端时序下可能读到半更新配置，属低频操作）。 |
+| `CheckList` 的 N+1 查询、`NextRunID` 非原子、`ClaimRenamed` 无崩溃标记 | 均为低影响项，改动收益小于回归风险，留待后续需要时处理。 |
+| CI 的 UPX 与 action 版本固定 | 需要核对官方 checksum/SHA 后才能填值，不凭记忆填写。 |
+
+### C.4 验证方式与结果
+
+```bash
+go build ./...        # 通过
+go vet ./...          # 通过
+go test ./...         # 8 个测试包全部通过（含新增 FinishUpload 快照守卫回归测试）
+go test -race ./...   # CI 执行（ubuntu-latest 自带 gcc）；
+                      # 本机 Windows 未装 gcc，CGO_ENABLED=0 下 -race 不可用
+```
+
+新增测试：`internal/index/store_test.go` 的 `TestFinishUpload_SnapshotGuard` ---- 覆盖"上传期间本地被改，旧快照回写必须被拒绝且新版本仍可被领取"。
+
+### C.5 USN 修复的实测验证
+
+USN 后端此前的失败是**静默降级**（日志一行 `[!] usn 后端不可用 ... 回退 poll`），因此这次用真实文件操作做了端到端验证，而不只依赖单测：
+
+```
+场景                       修复前                    修复后
+---------------------------------------------------------------------------
+启动元数据查询              ERROR_INVALID_USER_BUFFER 正常（JournalID 可读）
+创建文件                    poll 兜底检出              usn 检出（新增 1）
+修改文件                    poll 兜底检出              usn 检出（修改 1）
+删除文件（进回收站）        索引残留 state=LOCAL_NEW   删除 1 且落库 state=REMOVED_LOCAL
+新增目录 + 文件             poll 兜底                  新增 2 项
+改名                        poll 兜底                  无旧路径残留，renamed_from 正常
+```
+
+判定依据直接查索引库（`select rel_path, state from entry`），不只看控制台文案：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 删除后的行状态 | `('d.txt', 2)` 残留 | `('d.txt', 9)` 正确 |
+
+另外确认了 `idx_pending_order` / `idx_history` / `idx_blocked` 三条新索引在真实建库时确实创建（`sqlite_master` 查得）。
+

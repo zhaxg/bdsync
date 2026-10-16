@@ -86,6 +86,21 @@ var ddl = []string{
 	`CREATE INDEX IF NOT EXISTS idx_pending ON entry(pair_id, state, l_mtime_ns DESC)
 		WHERE state NOT IN (1, 9)`,
 
+	// 领取顺序索引：pendingSelect 是 ORDER BY l_settled_ns, rel_path，
+	// 而 idx_pending 第三列是 l_mtime_ns → 用不上，每次领取都要把候选集
+	// 捞出来做临时排序。这条索引让领取直接按序取值。
+	`CREATE INDEX IF NOT EXISTS idx_pending_order ON entry(pair_id, state, l_settled_ns, rel_path)
+		WHERE state NOT IN (1, 9)`,
+
+	// 归档积压（state=9 且远端还有副本）：被 idx_pending 的 WHERE 明确排除，
+	// 但它同时是 drain 的触发条件与 PendingStats 的口径 → 必须单独建索引。
+	`CREATE INDEX IF NOT EXISTS idx_history ON entry(pair_id, rel_path)
+		WHERE state = 9 AND r_fsid IS NOT NULL`,
+
+	// 卡住计数（attempts 达上限、不再出队）：静默不备份的告警口径。
+	`CREATE INDEX IF NOT EXISTS idx_blocked ON entry(pair_id, attempts)
+		WHERE state = 6`,
+
 	// usn 模式的 ref→path 映射（Phase 2 用，先建表）
 	`CREATE TABLE IF NOT EXISTS dir_ref (
 		pair_id  INTEGER NOT NULL,

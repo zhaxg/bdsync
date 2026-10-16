@@ -82,8 +82,14 @@ func (l *Logger) Write(p []byte) (int, error) {
 
 func (l *Logger) rotate() error {
 	if err := l.f.Close(); err != nil {
+		l.f = nil // 句柄已不可再用：显式停用文件日志，避免"已关闭但非 nil"的半死状态
 		return err
 	}
+	// 关键：先置空。Close 之后、open 成功之前，任何失败路径都不能留下一个
+	// 指向已关闭文件的非 nil 句柄 ---- 否则后续 Write 全落在坏句柄上失败，
+	// written 不再增长、轮转也不再触发，而进程毫无告警（静默失效，最难查）。
+	// Write 里 `if l.f == nil { return len(p), nil }` 即"停用文件日志、静默丢弃、进程照常"。
+	l.f = nil
 	// log.(keep-1) → 丢弃；...；log → log.1
 	oldest := fmt.Sprintf("%s.%d", l.path, l.keep)
 	_ = os.Remove(oldest)
@@ -95,6 +101,9 @@ func (l *Logger) rotate() error {
 		}
 	}
 	if err := os.Rename(l.path, l.path+".1"); err != nil && !os.IsNotExist(err) {
+		// 轮转失败（Windows 上被 AV/编辑器占用很常见）：文件日志停用，进程照常运行。
+		// 但必须留下可发现的痕迹 ---- stderr 是唯一不依赖日志文件本身的告警通道。
+		fmt.Fprintf(os.Stderr, "[logx] 日志轮转失败，文件日志已停用：%v\n", err)
 		return err
 	}
 	return l.open()

@@ -19,13 +19,56 @@ func newTestStore(t *testing.T) *Store {
 func insertIdentical(t *testing.T, st *Store, rel string, size, mtime int64, fsid, rmtime int64) {
 	t.Helper()
 	ctx := context.Background()
+	// 先落成 IN_PROGRESS（等价于"已被领取"）再走 FinishUpload：
+	// FinishUpload 现带乐观锁，只认 state=IN_PROGRESS 且 mtime/size 与快照一致的行。
 	if _, err := st.CommitBatch(ctx, 1, []Change{{
-		Kind: ChangeInsert, RelPath: rel, Size: size, MtimeNs: mtime, State: StateIdentical,
+		Kind: ChangeInsert, RelPath: rel, Size: size, MtimeNs: mtime, State: StateInProgress,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishUpload(ctx, rel, fsid, size, rmtime, "md5-"+rel); err != nil {
+	if _, err := st.FinishUpload(ctx, PendingEntry{RelPath: rel, Size: size, MtimeNs: mtime},
+		fsid, size, rmtime, "md5-"+rel); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestFinishUpload_SnapshotGuard -- 上传期间本地被再次修改时，旧快照的回写必须被
+// 拒绝：否则那行会被标成 IDENTICAL，新版本永不重传（静默漏备份）。
+func TestFinishUpload_SnapshotGuard(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if _, err := st.CommitBatch(ctx, 1, []Change{{
+		Kind: ChangeInsert, RelPath: "g.txt", Size: 10, MtimeNs: 100, State: StateInProgress,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟上传期间文件被改：Detector 写回"待传"并更新快照
+	if _, err := st.CommitBatch(ctx, 2, []Change{{
+		Kind: ChangeUpdate, RelPath: "g.txt", Size: 20, MtimeNs: 200, State: StateLocalMod,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := st.FinishUpload(ctx, PendingEntry{RelPath: "g.txt", Size: 10, MtimeNs: 100},
+		900, 10, 300, "md5-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("快照不匹配时 FinishUpload 不应回写")
+	}
+	// 新版本必须仍能被领取重传
+	pend, err := st.PendingList(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range pend {
+		if e.RelPath == "g.txt" && e.Size == 20 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("新版本应仍在待传队列中")
 	}
 }
 
@@ -87,11 +130,12 @@ func TestRewriteSubtree_RenameRegistration(t *testing.T) {
 	}
 	insertIdentical(t, st, "d/f.txt", 20, 200, 600, 222)
 	if _, err := st.CommitBatch(ctx, 1, []Change{{
-		Kind: ChangeInsert, RelPath: "d/g.txt", Size: 5, MtimeNs: 250, State: StateLocalNew,
+		Kind: ChangeInsert, RelPath: "d/g.txt", Size: 5, MtimeNs: 250, State: StateInProgress,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishUpload(ctx, "d/g.txt", 700, 5, 233, "md5-g"); err != nil {
+	if _, err := st.FinishUpload(ctx, PendingEntry{RelPath: "d/g.txt", Size: 5, MtimeNs: 250},
+		700, 5, 233, "md5-g"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.MarkMissing(ctx, 1, []string{"d/g.txt"}); err != nil {

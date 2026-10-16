@@ -44,6 +44,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # ── 测试与静态检查（发布门禁）──
+      # 此前流水线只有 build/release，仓库里 8 个测试包从未在 CI 跑过。
+      # internal/sender 下的 *_live_test.go 由环境变量门控，未设 BDSYNC_COOKIE
+      # 等变量时会自行 t.Skip，因此不需要凭据也不会让 CI 变红。
+      - name: 单元测试（含竞态检测）
+        run: go test -race ./...
+      - name: 静态检查
+        run: go vet ./...
+
       # ── 版本号：以 tag 为准（用户要求"运行时版本号跟着 tag 走"）──
       # tag 形如 v1.2.3 → 注入 -X main.version=v1.2.3。
       # 代码里是 `var version = defaultVersion` 而不是 const —— const 无法被 -X 覆写。
@@ -69,6 +78,11 @@ jobs:
             windows-latest) ASSET="upx-${UPX_VER}-win64.zip" ;;
             ubuntu-latest)  ASSET="upx-${UPX_VER}-amd64_linux.tar.xz" ;;
           esac
+          # ⚠ 已知加固缺口：这里下载后直接执行，没有校验 sha256/签名。
+          # 上游 release 被投毒或 CDN 被劫持即污染发布产物。补齐方式：从
+          # https://github.com/upx/upx/releases 取官方 checksum 后加一行
+          #   echo "<sha256>  upx-dl" | sha256sum -c -
+          # 放在解包之前（不要凭记忆填值，必须与所选版本的官方清单核对）。
           curl -fsSL -o upx-dl "https://github.com/upx/upx/releases/download/v${UPX_VER}/${ASSET}"
           mkdir -p upx
           if [[ "$ASSET" == *.zip ]]; then
@@ -89,19 +103,26 @@ jobs:
 
       - name: 构建
         shell: bash
+        # tag 必须先落到环境变量再进脚本：直接写 ${{ steps.ver.outputs.tag }}
+        # 等于把外部输入插值进 bash 源码，而 git ref 名允许 $ ( ) ; ` | 等字符，
+        # 形如 v1.0.0-$(cmd) 的 tag 会被二次求值执行（校验正则允许 [-+].* 后缀）。
+        # matrix.* 来自本工作流自身定义、非外部输入，保留原样。
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           OUT="bdsync-${{ matrix.target }}${{ matrix.ext }}"
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
             go build -trimpath \
-              -ldflags "-s -w -X main.version=${{ steps.ver.outputs.tag }}" \
+              -ldflags "-s -w -X main.version=$TAG" \
               -o "$OUT" ./cmd/bdsync
           ls -lh "$OUT"
           # ⚠ 版本号必须在这里校验，**不能**放到 UPX 之后：
           # UPX 会把字符串段编码压缩，压缩后 grep 必然找不到（实测确认）。
           # 这条检查防的是 -X 静默失效 —— 那会让产物版本号永远停在默认值。
-          if grep -qa "${{ steps.ver.outputs.tag }}" "$OUT"; then
-            echo "✓ 版本号 ${{ steps.ver.outputs.tag }} 已嵌入二进制"
+          # 用 -F 固定串匹配：tag 允许含正则元字符，普通 -a 会失配。
+          if grep -qaF "$TAG" "$OUT"; then
+            echo "✓ 版本号 $TAG 已嵌入二进制"
           else
             echo "::error::二进制里找不到版本号，检查 -X main.version 是否生效"
             exit 1

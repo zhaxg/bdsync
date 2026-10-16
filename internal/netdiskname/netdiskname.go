@@ -11,10 +11,16 @@ package netdiskname
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // 非法字符（Windows 风格 + 反斜杠兜底；`/` 是路径分隔符，逐组件校验时不会出现）
 const illegalChars = `:*?"<>|\`
+
+// maxComponentRunes -- 单组件最大长度（按 rune 计）。
+// 网盘/Windows 的实限量级在 UTF-16 码元附近，这里取 255 rune 作为保守上限：
+// 目标是"扫描阶段就能拦下明显超长的名字"，不是精确复刻某个文件系统的字节数规则。
+const maxComponentRunes = 255
 
 // 保留设备名（Windows 保留名，网盘同样不接受）。
 // 含 COM^1^2^3 等上标数字变体（design §10：COM^1^2^3 上标变体）。
@@ -50,12 +56,25 @@ func Validate(relPath string) error {
 }
 
 // Component -- 校验单个路径组件。
+//
+// TODO(已知取舍)：不做 Unicode NFC 归一化 ---- 归一化会改变已有文件的远端路径，
+// 引发大规模重命名，风险高于收益；如确需处理组合字符，另行评估后再引入。
 func Component(name string) error {
 	if name == "" {
 		return fmt.Errorf("空文件名组件")
 	}
+	if n := utf8.RuneCountInString(name); n > maxComponentRunes {
+		return fmt.Errorf("文件名过长（%d 字符，上限 %d；组件 %q）", n, maxComponentRunes, name)
+	}
 	if i := strings.IndexAny(name, illegalChars); i >= 0 {
 		return fmt.Errorf("含网盘非法字符 %q（组件 %q）", string(name[i]), name)
+	}
+	// 控制字符（0x00–0x1F 与 0x7F DEL）：本地看不出问题，往往是归档/其它系统
+	// 带进来的不可见脏数据，不在这里拦下就会"传到一半才失败"。
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("含控制字符 U+%04X（组件 %q）", r, name)
+		}
 	}
 	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return fmt.Errorf("结尾不能是点或空格（组件 %q）----外部归档解压常见", name)
